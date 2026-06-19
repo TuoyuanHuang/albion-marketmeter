@@ -1,6 +1,7 @@
-// Downloads the Albion Online binary dumps and produces two slim bundled files:
-//   src/data/items.json   -> [{ id, name, tier, ench, category }]
-//   src/data/recipes.json -> { id: { resources: [{id,count}], silver, focus, amount } }
+// Downloads the Albion Online binary dumps and produces three slim bundled files:
+//   src/data/items.json    -> [{ id, name, tier, group, sub }]
+//   src/data/recipes.json  -> { id: { resources, silver, focus, amount, fame, journal } }
+//   src/data/journals.json -> { PROFESSION: { tier: maxFame } }
 //
 // Run with: npm run build:data
 import { writeFile } from "node:fs/promises";
@@ -15,6 +16,23 @@ const ITEMS_TXT = "https://raw.githubusercontent.com/ao-data/ao-bin-dumps/master
 
 // Normalise a value that the XML->JSON converter may emit as object OR array.
 const asArray = (v) => (v == null ? [] : Array.isArray(v) ? v : [v]);
+
+// Which crafting journal an item's crafting fame fills, by @craftingcategory.
+// Warrior = plate + warrior weapons, Hunter = leather + hunter weapons,
+// Mage = cloth + mage staves, Toolmaker = bags/capes/tools/off-hands.
+const JOURNAL_BY_CC = {
+  plate_armor: "WARRIOR", plate_helmet: "WARRIOR", plate_shoes: "WARRIOR",
+  sword: "WARRIOR", axe: "WARRIOR", mace: "WARRIOR", hammer: "WARRIOR",
+  knuckles: "WARRIOR", crossbow: "WARRIOR", quarterstaff: "WARRIOR",
+  leather_armor: "HUNTER", leather_helmet: "HUNTER", leather_shoes: "HUNTER",
+  bow: "HUNTER", spear: "HUNTER", dagger: "HUNTER", naturestaff: "HUNTER",
+  cloth_armor: "MAGE", cloth_helmet: "MAGE", cloth_shoes: "MAGE",
+  firestaff: "MAGE", froststaff: "MAGE", arcanestaff: "MAGE",
+  holystaff: "MAGE", cursestaff: "MAGE",
+  bag: "TOOLMAKER", cape: "TOOLMAKER", tools: "TOOLMAKER",
+  offhand: "TOOLMAKER", gatherergear: "TOOLMAKER",
+};
+const CRAFT_PROFESSIONS = ["WARRIOR", "HUNTER", "MAGE", "TOOLMAKER"];
 
 async function main() {
   console.log("Fetching item display names…");
@@ -44,10 +62,33 @@ async function main() {
     "farmableitem",
   ];
 
+  // Pass 1: item value of every item (used to compute crafting fame). A crafted
+  // item's fame ≈ the sum of the item values of the resources consumed.
+  const itemValue = new Map();
+  for (const cat of Object.keys(dump)) {
+    for (const it of asArray(dump[cat])) {
+      const id = it?.["@uniquename"];
+      if (id && it["@itemvalue"] != null) {
+        itemValue.set(id, Number(it["@itemvalue"]) || 0);
+      }
+    }
+  }
+
+  // Journal fame capacity per profession/tier (T2–T8).
+  const journals = {};
+  for (const it of asArray(dump.journalitem)) {
+    const m = (it["@uniquename"] || "").match(/^T(\d)_JOURNAL_([A-Z]+)$/);
+    if (!m) continue;
+    const prof = m[2];
+    if (!CRAFT_PROFESSIONS.includes(prof)) continue;
+    (journals[prof] ??= {})[m[1]] = Number(it["@maxfame"] || 0);
+  }
+
   const items = [];
   const recipes = {};
   const seen = new Set();
 
+  // Pass 2: items + recipes.
   for (const cat of CATEGORIES) {
     for (const it of asArray(dump[cat])) {
       const id = it["@uniquename"];
@@ -84,11 +125,20 @@ async function main() {
         .filter((x) => x.id && x.count > 0);
       if (resources.length === 0) continue;
 
+      // Crafting fame for one craft ≈ sum of consumed resource item values.
+      const fame = resources.reduce(
+        (s, r) => s + (itemValue.get(r.id) || 0) * r.count,
+        0
+      );
+      const journal = JOURNAL_BY_CC[it["@craftingcategory"]] || null;
+
       recipes[id] = {
         resources,
         silver: Number(chosen["@silver"] || 0),
         focus: Number(chosen["@craftingfocus"] || 0),
         amount: Number(chosen["@amountcrafted"] || 1),
+        fame,
+        journal,
       };
     }
   }
@@ -99,8 +149,13 @@ async function main() {
 
   await writeFile(join(DATA_DIR, "items.json"), JSON.stringify(tradeable));
   await writeFile(join(DATA_DIR, "recipes.json"), JSON.stringify(recipes));
+  await writeFile(join(DATA_DIR, "journals.json"), JSON.stringify(journals));
 
-  console.log(`Wrote ${tradeable.length} items, ${Object.keys(recipes).length} recipes.`);
+  const withJournal = Object.values(recipes).filter((r) => r.journal).length;
+  console.log(
+    `Wrote ${tradeable.length} items, ${Object.keys(recipes).length} recipes ` +
+      `(${withJournal} with a journal), journals for ${Object.keys(journals).join(", ")}.`
+  );
 }
 
 main().catch((e) => {

@@ -1,5 +1,6 @@
 import itemsData from "@/data/items.json";
 import recipesData from "@/data/recipes.json";
+import journalsData from "@/data/journals.json";
 
 export interface Item {
   id: string;
@@ -51,10 +52,14 @@ export interface Recipe {
   silver: number;
   focus: number;
   amount: number;
+  fame?: number; // crafting fame per craft (for journal value)
+  journal?: "WARRIOR" | "HUNTER" | "MAGE" | "TOOLMAKER" | null;
 }
 
 export const ITEMS = itemsData as Item[];
 export const RECIPES = recipesData as Record<string, Recipe>;
+// PROFESSION -> tier(string) -> max journal fame.
+export const JOURNALS = journalsData as Record<string, Record<string, number>>;
 
 const byId = new Map(ITEMS.map((i) => [i.id, i]));
 
@@ -130,6 +135,30 @@ export function itemsForScan(
   const useSubs = subs && subs.size > 0;
   const out: Item[] = [];
   for (const it of ITEMS) {
+    if (!cats.has(it.group)) continue;
+    if (tierSet.size && !tierSet.has(it.tier)) continue;
+    if (useSubs && !subs!.has(it.sub)) continue;
+    out.push(it);
+    if (out.length >= cap) break;
+  }
+  return out;
+}
+
+// Craftable items (those with a recipe) in a scan group + tier set, capped.
+export function craftablesForScan(
+  groupKey: string,
+  tiers: number[],
+  cap = 600,
+  subs?: Set<string>
+): Item[] {
+  const group = GROUP_BY_KEY.get(groupKey);
+  if (!group) return [];
+  const cats = new Set(group.cats);
+  const tierSet = new Set(tiers);
+  const useSubs = subs && subs.size > 0;
+  const out: Item[] = [];
+  for (const it of ITEMS) {
+    if (!RECIPES[it.id]) continue;
     if (!cats.has(it.group)) continue;
     if (tierSet.size && !tierSet.has(it.tier)) continue;
     if (useSubs && !subs!.has(it.sub)) continue;

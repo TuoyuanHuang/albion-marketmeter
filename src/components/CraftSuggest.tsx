@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import {
-  CITIES,
+  TRADE_CITIES,
   QUALITIES,
   DEFAULT_SALES_TAX,
   DEFAULT_SETUP_FEE,
@@ -10,91 +10,81 @@ import {
   ageOf,
 } from "@/lib/albion";
 import ChipGroup from "@/components/ChipGroup";
-import {
-  GROUPS,
-  availableSubs,
-  TIER_OPTS,
-  QUALITY_OPTS,
-  ENCHANT_OPTS,
-} from "@/lib/filters";
+import { CRAFT_GROUPS, availableSubs, TIER_OPTS } from "@/lib/filters";
 
-const qualityLabel = (q: number) =>
-  QUALITIES.find((x) => x.value === q)?.label ?? "";
+const JOURNAL_LABEL: Record<string, string> = {
+  WARRIOR: "Warrior",
+  HUNTER: "Hunter",
+  MAGE: "Mage",
+  TOOLMAKER: "Toolmaker",
+};
 
-interface ScanRow {
+interface Row {
   id: string;
   name: string;
   tier: number;
-  enchant: number;
-  quality: number;
-  from: string;
-  to: string;
-  buy: number;
+  journal: string | null;
+  fame: number;
   sell: number;
+  sellDate: string;
+  matCost: number;
+  net: number;
+  journalProfit: number;
   profit: number;
   margin: number;
-  aDate: string;
-  bDate: string;
 }
 
-export default function FlipScanner() {
-  const [marketA, setMarketA] = useState("Caerleon");
-  const [marketB, setMarketB] = useState("Black Market");
-  const [groups, setGroups] = useState<string[]>(["resources"]);
+export default function CraftSuggest() {
+  const [city, setCity] = useState("Caerleon");
+  const [quality, setQuality] = useState(1);
+  const [groups, setGroups] = useState<string[]>(["weapons"]);
   const [subs, setSubs] = useState<string[]>([]);
   const [tiers, setTiers] = useState<number[]>([4, 5, 6, 7, 8]);
-  const [qualities, setQualities] = useState<number[]>([1]);
-  const [enchants, setEnchants] = useState<number[]>([0]);
+  const [returnRate, setReturnRate] = useState(15.2);
   const [salesTax, setSalesTax] = useState(DEFAULT_SALES_TAX * 100);
   const [setupFee, setSetupFee] = useState(DEFAULT_SETUP_FEE * 100);
+  const [useJournals, setUseJournals] = useState(true);
   const [sort, setSort] = useState<"profit" | "margin">("profit");
-  const [rows, setRows] = useState<ScanRow[]>([]);
-  const [scanned, setScanned] = useState<number | null>(null);
-  // Markets the displayed results were actually scanned with (for column headers).
-  const [used, setUsed] = useState<{ a: string; b: string } | null>(null);
+  const [rows, setRows] = useState<Row[]>([]);
+  const [meta, setMeta] = useState<{ scanned: number; priced: number } | null>(
+    null
+  );
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
   const subOptions = availableSubs(groups);
-
-  // Drop selected subcategories that no longer belong to the chosen categories.
   useEffect(() => {
     const valid = new Set(availableSubs(groups).map((s) => s.value));
     setSubs((cur) => cur.filter((s) => valid.has(s)));
   }, [groups]);
 
   async function scan(sortBy: "profit" | "margin" = sort) {
-    if (marketA === marketB) {
-      setErr("Pick two different markets.");
-      return;
-    }
-    if (!groups.length || !tiers.length || !qualities.length || !enchants.length) {
-      setErr("Select at least one category, tier, quality and enchantment.");
+    if (!groups.length || !tiers.length) {
+      setErr("Select at least one category and tier.");
       return;
     }
     setLoading(true);
     setErr(null);
     setRows([]);
-    setScanned(null);
+    setMeta(null);
     try {
       const params = new URLSearchParams({
         groups: groups.join(","),
         subs: subs.join(","),
         tiers: tiers.join(","),
-        qualities: qualities.join(","),
-        enchants: enchants.join(","),
-        marketA,
-        marketB,
-        sort: sortBy,
+        city,
+        quality: String(quality),
+        rr: String(returnRate / 100),
         tax: String(salesTax / 100),
         fee: String(setupFee / 100),
+        journals: useJournals ? "1" : "0",
+        sort: sortBy,
       });
-      const res = await fetch(`/api/scan?${params}`);
+      const res = await fetch(`/api/craft-suggest?${params}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || `API ${res.status}`);
-      setRows(data.results as ScanRow[]);
-      setScanned(data.scanned);
-      setUsed({ a: data.marketA, b: data.marketB });
+      setRows(data.results as Row[]);
+      setMeta({ scanned: data.scanned, priced: data.priced });
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Scan failed");
     } finally {
@@ -102,37 +92,49 @@ export default function FlipScanner() {
     }
   }
 
+  const qLabel = QUALITIES.find((q) => q.value === quality)?.label ?? "";
+
   return (
     <div className="space-y-4">
       <div className="space-y-3 rounded-xl border border-ao-border bg-ao-panel p-4">
-        <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="Market A">
+        <div className="grid gap-3 sm:grid-cols-3">
+          <Field label="City (buy mats + sell)">
             <select
-              value={marketA}
-              onChange={(e) => setMarketA(e.target.value)}
+              value={city}
+              onChange={(e) => setCity(e.target.value)}
               className="w-full rounded border border-ao-border bg-ao-bg px-2 py-1.5 text-sm text-white"
             >
-              {CITIES.map((c) => (
+              {TRADE_CITIES.map((c) => (
                 <option key={c}>{c}</option>
               ))}
             </select>
           </Field>
-          <Field label="Market B">
+          <Field label="Sell quality">
             <select
-              value={marketB}
-              onChange={(e) => setMarketB(e.target.value)}
+              value={quality}
+              onChange={(e) => setQuality(Number(e.target.value))}
               className="w-full rounded border border-ao-border bg-ao-bg px-2 py-1.5 text-sm text-white"
             >
-              {CITIES.map((c) => (
-                <option key={c}>{c}</option>
+              {QUALITIES.map((q) => (
+                <option key={q.value} value={q.value}>
+                  {q.label}
+                </option>
               ))}
             </select>
           </Field>
+          <label className="flex items-end gap-2 pb-1.5 text-sm text-white">
+            <input
+              type="checkbox"
+              checked={useJournals}
+              onChange={(e) => setUseJournals(e.target.checked)}
+            />
+            Include journal value
+          </label>
         </div>
 
         <ChipGroup
           label="Categories"
-          options={GROUPS}
+          options={CRAFT_GROUPS}
           selected={groups}
           onChange={setGroups}
         />
@@ -150,36 +152,11 @@ export default function FlipScanner() {
           selected={tiers}
           onChange={setTiers}
         />
-        <ChipGroup
-          label="Qualities"
-          options={QUALITY_OPTS}
-          selected={qualities}
-          onChange={setQualities}
-        />
-        <ChipGroup
-          label="Enchantments"
-          options={ENCHANT_OPTS}
-          selected={enchants}
-          onChange={setEnchants}
-        />
 
-        <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="Tax %">
-            <input
-              type="number"
-              value={salesTax}
-              onChange={(e) => setSalesTax(Number(e.target.value))}
-              className="w-full rounded border border-ao-border bg-ao-bg px-2 py-1.5 text-sm text-white"
-            />
-          </Field>
-          <Field label="Setup %">
-            <input
-              type="number"
-              value={setupFee}
-              onChange={(e) => setSetupFee(Number(e.target.value))}
-              className="w-full rounded border border-ao-border bg-ao-bg px-2 py-1.5 text-sm text-white"
-            />
-          </Field>
+        <div className="grid gap-3 sm:grid-cols-3">
+          <NumField label="Return rate %" value={returnRate} onChange={setReturnRate} />
+          <NumField label="Sales tax %" value={salesTax} onChange={setSalesTax} />
+          <NumField label="Setup fee %" value={setupFee} onChange={setSetupFee} />
         </div>
       </div>
 
@@ -188,14 +165,15 @@ export default function FlipScanner() {
         disabled={loading}
         className="rounded-md bg-ao-gold px-5 py-2 text-sm font-semibold text-black hover:brightness-110 disabled:opacity-50"
       >
-        {loading ? "Scanning…" : "Scan for flips"}
+        {loading ? "Scanning…" : "Find profitable crafts"}
       </button>
 
       {err && <div className="text-sm text-ao-red">{err}</div>}
-      {scanned != null && !loading && (
+      {meta && !loading && (
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="text-sm text-ao-muted">
-            Scanned {scanned} items · {rows.length} profitable flips found.
+            {meta.priced} of {meta.scanned} craftable items had enough price data
+            · selling at {qLabel} in {city}.
           </div>
           <div className="flex items-center gap-2 text-xs text-ao-muted">
             Sort by
@@ -227,53 +205,47 @@ export default function FlipScanner() {
             <thead className="bg-ao-panel text-left text-ao-muted">
               <tr>
                 <th className="px-3 py-2">Item</th>
-                <th className="px-3 py-2">Route</th>
-                <th className="px-3 py-2 text-right">Buy</th>
-                <th className="px-3 py-2 text-right">Sell (net)</th>
+                <th className="px-3 py-2">Journal</th>
+                <th className="px-3 py-2 text-right">Mat cost</th>
+                <th className="px-3 py-2 text-right">Sell</th>
+                <th className="px-3 py-2 text-right">Net</th>
+                <th className="px-3 py-2 text-right">Journal +</th>
                 <th className="px-3 py-2 text-right">Profit</th>
                 <th className="px-3 py-2 text-right">Margin</th>
-                <th className="px-3 py-2 text-right">
-                  {used?.a ?? "A"} age
-                </th>
-                <th className="px-3 py-2 text-right">
-                  {used?.b ?? "B"} age
-                </th>
+                <th className="px-3 py-2 text-right">Updated</th>
               </tr>
             </thead>
             <tbody>
               {rows.map((r) => (
-                <tr
-                  key={`${r.id}-${r.quality}`}
-                  className="border-t border-ao-border hover:bg-ao-panel/50"
-                >
+                <tr key={r.id} className="border-t border-ao-border hover:bg-ao-panel/50">
                   <td className="px-3 py-2">
-                    <span className="text-ao-gold">
-                      T{r.tier}
-                      {r.enchant > 0 ? `.${r.enchant}` : ""}
-                    </span>{" "}
-                    {r.name}
-                    {r.quality > 1 && (
-                      <span className="ml-2 rounded bg-ao-border px-1.5 text-xs text-ao-muted">
-                        {qualityLabel(r.quality)}
-                      </span>
-                    )}
+                    <span className="text-ao-gold">T{r.tier}</span> {r.name}
                   </td>
                   <td className="px-3 py-2 text-ao-muted">
-                    {r.from} <span className="text-ao-gold">→</span> {r.to}
+                    {r.journal ? JOURNAL_LABEL[r.journal] : "—"}
                   </td>
-                  <td className="px-3 py-2 text-right">{fmt(r.buy)}</td>
+                  <td className="px-3 py-2 text-right">{fmt(r.matCost)}</td>
                   <td className="px-3 py-2 text-right">{fmt(r.sell)}</td>
-                  <td className="px-3 py-2 text-right font-medium text-ao-green">
+                  <td className="px-3 py-2 text-right">{fmt(r.net)}</td>
+                  <td className="px-3 py-2 text-right text-ao-muted">
+                    {r.journalProfit > 0 ? `+${fmt(r.journalProfit)}` : "—"}
+                  </td>
+                  <td
+                    className={`px-3 py-2 text-right font-medium ${
+                      r.profit >= 0 ? "text-ao-green" : "text-ao-red"
+                    }`}
+                  >
                     {fmt(r.profit)}
                   </td>
-                  <td className="px-3 py-2 text-right text-ao-green">
+                  <td
+                    className={`px-3 py-2 text-right ${
+                      r.margin >= 0 ? "text-ao-green" : "text-ao-red"
+                    }`}
+                  >
                     {(r.margin * 100).toFixed(0)}%
                   </td>
                   <td className="px-3 py-2 text-right text-ao-muted">
-                    {ageOf(r.aDate)}
-                  </td>
-                  <td className="px-3 py-2 text-right text-ao-muted">
-                    {ageOf(r.bDate)}
+                    {ageOf(r.sellDate)}
                   </td>
                 </tr>
               ))}
@@ -283,11 +255,34 @@ export default function FlipScanner() {
       )}
 
       <p className="text-xs text-ao-muted">
-        City sells assume listing a sell order (tax + setup fee); the Black Market
-        assumes an instant sell into its buy orders (tax only). Prices are
-        crowd-sourced and may be stale — verify in-game before trading.
+        Profit per item = product sell price (net of tax + setup fee) + journal
+        value − material cost (after return rate). Journal value assumes you fill
+        empty journals while crafting and sell them full. Material prices are the
+        cheapest sell orders in {city}; crafted output quality is assumed to be the
+        selected sell quality. Prices are crowd-sourced and may be stale.
       </p>
     </div>
+  );
+}
+
+function NumField({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  onChange: (n: number) => void;
+}) {
+  return (
+    <Field label={label}>
+      <input
+        type="number"
+        value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+        className="w-full rounded border border-ao-border bg-ao-bg px-2 py-1.5 text-sm text-white"
+      />
+    </Field>
   );
 }
 

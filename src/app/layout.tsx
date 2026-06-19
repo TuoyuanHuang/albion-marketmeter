@@ -12,6 +12,7 @@ const NAV = [
   { href: "/", label: "Home" },
   { href: "/flips", label: "Flip Finder" },
   { href: "/crafting", label: "Crafting Calc" },
+  { href: "/craft-suggest", label: "Craft Suggest" },
   { href: "/history", label: "Price History" },
 ];
 

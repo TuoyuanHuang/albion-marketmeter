@@ -12,6 +12,11 @@ Defaults to the **Europe** server.
 - **Crafting Calculator** — material cost vs. sell price for any craftable item,
   with a configurable resource **return rate**, market fees, and a "craft
   sub-materials when cheaper" mode that recursively prices intermediate goods.
+- **Crafting Suggestions** — scans craftable items in the chosen categories and
+  ranks what's worth crafting: product sell value (at a chosen quality, net of
+  fees) + **journal value** − material cost (after return rate). Crafting fame is
+  derived from resource item values; journals are mapped by profession
+  (Warrior/Hunter/Mage/Toolmaker) and valued from live empty/full journal prices.
 - **Price History** — average price and traded volume over time, charted per
   city (daily or 6-hour resolution).
 

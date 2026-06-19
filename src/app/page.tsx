@@ -14,6 +14,12 @@ const CARDS = [
     icon: "⚒",
   },
   {
+    href: "/craft-suggest",
+    title: "Crafting Suggestions",
+    desc: "Scan all craftable items and rank what's worth crafting, including journal value.",
+    icon: "💡",
+  },
+  {
     href: "/history",
     title: "Price History",
     desc: "Chart historical average price and traded volume across cities over time.",
