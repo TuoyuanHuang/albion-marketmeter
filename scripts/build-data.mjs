@@ -17,6 +17,12 @@ const ITEMS_TXT = "https://raw.githubusercontent.com/ao-data/ao-bin-dumps/master
 // Normalise a value that the XML->JSON converter may emit as object OR array.
 const asArray = (v) => (v == null ? [] : Array.isArray(v) ? v : [v]);
 
+// Convert a dump resource id to its market id: "T6_PLANKS_LEVEL1" -> "T6_PLANKS@1".
+const marketId = (id) => {
+  const m = (id || "").match(/^(.*)_LEVEL(\d)$/);
+  return m ? `${m[1]}@${m[2]}` : id;
+};
+
 // Which crafting journal an item's crafting fame fills, by @craftingcategory.
 // Warrior = plate + warrior weapons, Hunter = leather + hunter weapons,
 // Mage = cloth + mage staves, Toolmaker = bags/capes/tools/off-hands.
@@ -132,7 +138,7 @@ async function main() {
       );
       const journal = JOURNAL_BY_CC[it["@craftingcategory"]] || null;
 
-      recipes[id] = {
+      const recipe = {
         resources,
         silver: Number(chosen["@silver"] || 0),
         focus: Number(chosen["@craftingfocus"] || 0),
@@ -140,6 +146,36 @@ async function main() {
         fame,
         journal,
       };
+
+      // Enchanted recipes (levels 1-3) from the item's enchantments node. Each
+      // uses enchanted materials (_LEVEL ids) and yields proportionally more fame.
+      const ench = {};
+      for (const e of asArray(it.enchantments?.enchantment)) {
+        const lvl = Number(e["@enchantmentlevel"]);
+        if (!(lvl >= 1 && lvl <= 3)) continue;
+        const cr = e.craftingrequirements;
+        const eres = asArray(cr?.craftresource)
+          .map((x) => ({
+            id: marketId(x["@uniquename"]),
+            count: Number(x["@count"]),
+            _dump: x["@uniquename"],
+          }))
+          .filter((x) => x.id && x.count > 0);
+        if (eres.length === 0) continue;
+        const efame = eres.reduce(
+          (s, r) => s + (itemValue.get(r._dump) || 0) * r.count,
+          0
+        );
+        ench[lvl] = {
+          resources: eres.map(({ id, count }) => ({ id, count })),
+          silver: Number(cr["@silver"] || 0),
+          focus: Number(cr["@craftingfocus"] || 0),
+          fame: efame,
+        };
+      }
+      if (Object.keys(ench).length) recipe.ench = ench;
+
+      recipes[id] = recipe;
     }
   }
 

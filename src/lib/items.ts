@@ -47,6 +47,13 @@ function queryTerms(query: string): string[] {
     .filter((t) => t && !TIER_PREFIXES.has(t) && !TIER_WORDS.has(t));
 }
 
+export interface EnchantRecipe {
+  resources: { id: string; count: number }[];
+  silver: number;
+  focus: number;
+  fame: number;
+}
+
 export interface Recipe {
   resources: { id: string; count: number }[];
   silver: number;
@@ -54,6 +61,7 @@ export interface Recipe {
   amount: number;
   fame?: number; // crafting fame per craft (for journal value)
   journal?: "WARRIOR" | "HUNTER" | "MAGE" | "TOOLMAKER" | null;
+  ench?: Record<string, EnchantRecipe>; // enchant level "1".."3"
 }
 
 export const ITEMS = itemsData as Item[];

@@ -13,10 +13,13 @@ Defaults to the **Europe** server.
   with a configurable resource **return rate**, market fees, and a "craft
   sub-materials when cheaper" mode that recursively prices intermediate goods.
 - **Crafting Suggestions** — scans craftable items in the chosen categories and
-  ranks what's worth crafting: product sell value (at a chosen quality, net of
-  fees) + **journal value** − material cost (after return rate). Crafting fame is
-  derived from resource item values; journals are mapped by profession
-  (Warrior/Hunter/Mage/Toolmaker) and valued from live empty/full journal prices.
+  ranks what's worth crafting: product sell value (net of fees) + **journal
+  value** − material cost (after return rate). Supports multiple **qualities** and
+  **enchant levels** (each its own row), a **craft quantity** (scales totals and
+  journals filled), and a **sales-volume filter** (min items sold per day/week,
+  from price history). Crafting fame is derived from resource item values;
+  journals are mapped by profession (Warrior/Hunter/Mage/Toolmaker) and valued
+  from live empty/full journal prices.
 - **Price History** — average price and traded volume over time, charted per
   city (daily or 6-hour resolution).
 
