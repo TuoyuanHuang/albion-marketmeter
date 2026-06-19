@@ -1,0 +1,109 @@
+// Downloads the Albion Online binary dumps and produces two slim bundled files:
+//   src/data/items.json   -> [{ id, name, tier, ench, category }]
+//   src/data/recipes.json -> { id: { resources: [{id,count}], silver, focus, amount } }
+//
+// Run with: npm run build:data
+import { writeFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const DATA_DIR = join(__dirname, "..", "src", "data");
+
+const ITEMS_JSON = "https://raw.githubusercontent.com/ao-data/ao-bin-dumps/master/items.json";
+const ITEMS_TXT = "https://raw.githubusercontent.com/ao-data/ao-bin-dumps/master/formatted/items.txt";
+
+// Normalise a value that the XML->JSON converter may emit as object OR array.
+const asArray = (v) => (v == null ? [] : Array.isArray(v) ? v : [v]);
+
+async function main() {
+  console.log("Fetching item display names…");
+  const txt = await (await fetch(ITEMS_TXT)).text();
+  /** id -> display name */
+  const nameMap = new Map();
+  for (const line of txt.split("\n")) {
+    // Format: "  123: T4_BAG : Adept's Bag"
+    const m = line.match(/^\s*\d+:\s*(\S+)\s*:\s*(.+?)\s*$/);
+    if (m) nameMap.set(m[1].trim(), m[2].trim());
+  }
+  console.log(`  ${nameMap.size} names`);
+
+  console.log("Fetching item dump (recipes)…");
+  const dump = (await (await fetch(ITEMS_JSON)).json()).items;
+
+  // Categories in the dump that can hold craftable/tradeable items.
+  const CATEGORIES = [
+    "simpleitem",
+    "consumableitem",
+    "consumablefrominventoryitem",
+    "equipmentitem",
+    "weapon",
+    "mount",
+    "furnitureitem",
+    "journalitem",
+    "farmableitem",
+  ];
+
+  const items = [];
+  const recipes = {};
+  const seen = new Set();
+
+  for (const cat of CATEGORIES) {
+    for (const it of asArray(dump[cat])) {
+      const id = it["@uniquename"];
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+
+      const tierMatch = id.match(/^T(\d)_/);
+      const tier = tierMatch ? Number(tierMatch[1]) : 0;
+      const name = nameMap.get(id) || id;
+      // Friendly shop grouping used by the flip scanner filters.
+      const group = it["@shopcategory"] || "";
+      const sub = it["@shopsubcategory1"] || "";
+
+      items.push({ id, name, tier, group, sub });
+
+      // craftingrequirements may be a single object or an array of recipes.
+      const reqs = asArray(it.craftingrequirements);
+      if (reqs.length === 0) continue;
+
+      // Pick the simplest standard recipe: the one whose resources contain no
+      // faction tokens (those are the alternative faction-crafting recipes).
+      let chosen = null;
+      for (const r of reqs) {
+        const res = asArray(r.craftresource);
+        if (res.length === 0) continue;
+        const hasToken = res.some((x) => /_TOKEN_/.test(x["@uniquename"] || ""));
+        if (!hasToken) { chosen = r; break; }
+        if (!chosen) chosen = r; // fallback
+      }
+      if (!chosen) continue;
+
+      const resources = asArray(chosen.craftresource)
+        .map((x) => ({ id: x["@uniquename"], count: Number(x["@count"]) }))
+        .filter((x) => x.id && x.count > 0);
+      if (resources.length === 0) continue;
+
+      recipes[id] = {
+        resources,
+        silver: Number(chosen["@silver"] || 0),
+        focus: Number(chosen["@craftingfocus"] || 0),
+        amount: Number(chosen["@amountcrafted"] || 1),
+      };
+    }
+  }
+
+  // Keep only tiered tradeable items for the searchable list (drops dev/test junk).
+  const tradeable = items.filter((i) => i.tier >= 1 && /^T\d_/.test(i.id));
+  tradeable.sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
+
+  await writeFile(join(DATA_DIR, "items.json"), JSON.stringify(tradeable));
+  await writeFile(join(DATA_DIR, "recipes.json"), JSON.stringify(recipes));
+
+  console.log(`Wrote ${tradeable.length} items, ${Object.keys(recipes).length} recipes.`);
+}
+
+main().catch((e) => {
+  console.error(e);
+  process.exit(1);
+});

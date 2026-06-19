@@ -1,0 +1,12 @@
+# Netlify configuration for the Next.js app.
+# The official Next.js runtime (@netlify/plugin-nextjs) is auto-installed when
+# Netlify detects Next.js; it handles SSR routes, the API routes and caching.
+[build]
+  command = "npm run build"
+  publish = ".next"
+
+[build.environment]
+  NODE_VERSION = "20"
+
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
