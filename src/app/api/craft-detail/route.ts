@@ -13,7 +13,9 @@ export async function GET(req: NextRequest) {
   const item = sp.get("item");
   const enchant = Math.max(0, Math.min(3, Number(sp.get("enchant") ?? "0")));
   const quality = Math.max(1, Math.min(5, Number(sp.get("quality") ?? "1")));
-  const city = sp.get("city") ?? "Caerleon";
+  const buyCity = sp.get("buyCity") ?? sp.get("city") ?? "Caerleon";
+  const sellCity = sp.get("sellCity") ?? sp.get("city") ?? buyCity;
+  const sellToBM = sellCity === "Black Market";
   if (!item) {
     return NextResponse.json({ error: "item required" }, { status: 400 });
   }
@@ -59,7 +61,7 @@ export async function GET(req: NextRequest) {
   ];
   const url = new URL(`${AODP_BASE}/prices/${ids.map(encodeURIComponent).join(",")}`);
   url.searchParams.set("qualities", Array.from(new Set([1, quality])).join(","));
-  url.searchParams.set("locations", city);
+  url.searchParams.set("locations", Array.from(new Set([buyCity, sellCity])).join(","));
 
   let rows: PriceRow[] = [];
   try {
@@ -72,14 +74,26 @@ export async function GET(req: NextRequest) {
     /* leave prices empty -> user can fill manually */
   }
 
-  const price = new Map<string, { price: number; date: string }>();
+  // Keyed by id|quality|city, holding both the sell-order and buy-order price.
+  const m = new Map<string, { sellMin?: number; buyMax?: number; date: string }>();
   for (const r of rows) {
-    if (!isPriced(r.sell_price_min)) continue;
-    // product keyed by quality; materials/journals are quality 1.
-    const key = `${r.item_id}|${r.quality}`;
-    price.set(key, { price: r.sell_price_min, date: r.sell_price_min_date });
+    const key = `${r.item_id}|${r.quality}|${r.city}`;
+    const cur = m.get(key) ?? { date: "" };
+    if (isPriced(r.sell_price_min)) { cur.sellMin = r.sell_price_min; cur.date = r.sell_price_min_date; }
+    if (isPriced(r.buy_price_max)) { cur.buyMax = r.buy_price_max; if (!cur.date) cur.date = r.buy_price_max_date; }
+    m.set(key, cur);
   }
-  const at = (id: string, q: number) => price.get(`${id}|${q}`);
+  // Materials/journals: buy-order price at the buy city.
+  const buyAt = (id: string, q: number) => {
+    const e = m.get(`${id}|${q}|${buyCity}`);
+    return e?.sellMin != null ? { price: e.sellMin, date: e.date } : { price: 0, date: "" };
+  };
+  // Product: list price in a city, or instant-sell (buy order) to the Black Market.
+  const sellAt = (id: string, q: number) => {
+    const e = m.get(`${id}|${q}|${sellCity}`);
+    const p = sellToBM ? e?.buyMax : e?.sellMin;
+    return p != null ? { price: p, date: e!.date } : { price: 0, date: "" };
+  };
 
   return NextResponse.json({
     item,
@@ -91,19 +105,21 @@ export async function GET(req: NextRequest) {
     silver,
     fame,
     journal,
-    city,
-    product: { id: productId, ...(at(productId, quality) ?? { price: 0, date: "" }) },
+    buyCity,
+    sellCity,
+    sellToBM,
+    product: { id: productId, ...sellAt(productId, quality) },
     resources: resources.map((r) => ({
       id: r.id,
       name: displayName(r.id),
       count: r.count,
-      ...(at(r.id, 1) ?? { price: 0, date: "" }),
+      ...buyAt(r.id, 1),
     })),
     journalInfo: journalInfo
       ? {
           ...journalInfo,
-          empty: at(journalInfo.emptyId, 1) ?? { price: 0, date: "" },
-          full: at(journalInfo.fullId, 1) ?? { price: 0, date: "" },
+          empty: buyAt(journalInfo.emptyId, 1),
+          full: buyAt(journalInfo.fullId, 1),
         }
       : null,
   });

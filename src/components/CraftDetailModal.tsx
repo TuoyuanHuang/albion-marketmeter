@@ -24,7 +24,9 @@ interface Detail {
   silver: number;
   fame: number;
   journal: string | null;
-  city: string;
+  buyCity: string;
+  sellCity: string;
+  sellToBM: boolean;
   product: { id: string } & Quote;
   resources: ({ id: string; name: string; count: number } & Quote)[];
   journalInfo:
@@ -47,7 +49,8 @@ export interface DetailTarget {
 
 export default function CraftDetailModal({
   target,
-  city,
+  buyCity,
+  sellCity,
   rr,
   tax,
   fee,
@@ -56,7 +59,8 @@ export default function CraftDetailModal({
   onClose,
 }: {
   target: DetailTarget;
-  city: string;
+  buyCity: string;
+  sellCity: string;
   rr: number; // 0..1
   tax: number;
   fee: number;
@@ -82,7 +86,8 @@ export default function CraftDetailModal({
       item: target.item,
       enchant: String(target.enchant),
       quality: String(target.quality),
-      city,
+      buyCity,
+      sellCity,
     });
     fetch(`/api/craft-detail?${params}`, { signal: ctrl.signal })
       .then(async (r) => {
@@ -102,7 +107,7 @@ export default function CraftDetailModal({
       })
       .finally(() => setLoading(false));
     return () => ctrl.abort();
-  }, [target, city]);
+  }, [target, buyCity, sellCity]);
 
   // Close on Escape.
   useEffect(() => {
@@ -118,7 +123,9 @@ export default function CraftDetailModal({
       0
     );
     const totalCost = matCost + detail.silver;
-    const revenue = productPrice * detail.amount * (1 - tax - fee);
+    // Black Market = instant sell (tax only, no setup fee).
+    const feeMul = detail.sellToBM ? 1 - tax : 1 - tax - fee;
+    const revenue = productPrice * detail.amount * feeMul;
     let journalProfit = 0;
     if (useJournals && detail.journalInfo && detail.fame) {
       const perFame =
@@ -167,7 +174,8 @@ export default function CraftDetailModal({
               )}
             </div>
             <div className="mt-0.5 text-xs text-ao-muted">
-              Recipe &amp; prices in {city}. Edit any price to recompute.
+              Buy mats in {buyCity} · sell in {sellCity}. Edit any price to
+              recompute.
             </div>
           </div>
           <button
@@ -241,7 +249,7 @@ export default function CraftDetailModal({
             {/* Product + journal prices */}
             <div className="grid gap-3 sm:grid-cols-2">
               <EditCard
-                label={`Sell price (${qLabel})`}
+                label={`${detail.sellToBM ? "Black Market buy order" : "Sell price"} (${qLabel}) · ${detail.sellCity}`}
                 value={productPrice}
                 onChange={setProductPrice}
                 age={detail.product.price ? ageOf(detail.product.date) : "no data"}

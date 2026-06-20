@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import {
   TRADE_CITIES,
+  CITIES,
   QUALITIES,
   DEFAULT_SALES_TAX,
   DEFAULT_SETUP_FEE,
@@ -28,6 +29,10 @@ const JOURNAL_LABEL: Record<string, string> = {
 const qualityLabel = (q: number) =>
   QUALITIES.find((x) => x.value === q)?.label ?? "";
 
+// Green/red for a profit-like number; muted when unknown (missing price data).
+const tone = (n: number | null) =>
+  n == null ? "text-ao-muted" : n >= 0 ? "text-ao-green" : "text-ao-red";
+
 interface Row {
   id: string;
   name: string;
@@ -36,20 +41,22 @@ interface Row {
   quality: number;
   journal: string | null;
   fame: number;
-  sell: number;
+  sell: number | null;
   sellDate: string;
-  matCost: number;
-  net: number;
+  matCost: number | null;
+  net: number | null;
   journalProfit: number;
-  profit: number;
-  total: number;
+  profit: number | null;
+  total: number | null;
   journals: number;
-  margin: number;
+  margin: number | null;
   volume: number;
+  complete: boolean;
 }
 
 export default function CraftSuggest() {
-  const [city, setCity] = useState("Caerleon");
+  const [buyCity, setBuyCity] = useState("Caerleon");
+  const [sellCity, setSellCity] = useState("Caerleon");
   const [groups, setGroups] = useState<string[]>(["weapons"]);
   const [subs, setSubs] = useState<string[]>([]);
   const [tiers, setTiers] = useState<number[]>([4, 5, 6, 7, 8]);
@@ -62,6 +69,7 @@ export default function CraftSuggest() {
   const [quantity, setQuantity] = useState(100);
   const [minVol, setMinVol] = useState(0);
   const [volPeriod, setVolPeriod] = useState<"day" | "week">("day");
+  const [incomplete, setIncomplete] = useState(false);
   const [sort, setSort] = useState<"profit" | "total" | "margin">("profit");
   const [rows, setRows] = useState<Row[]>([]);
   const [meta, setMeta] = useState<{ scanned: number; priced: number } | null>(null);
@@ -91,7 +99,8 @@ export default function CraftSuggest() {
         tiers: tiers.join(","),
         qualities: qualities.join(","),
         enchants: enchants.join(","),
-        city,
+        buyCity,
+        sellCity,
         rr: String(returnRate / 100),
         tax: String(salesTax / 100),
         fee: String(setupFee / 100),
@@ -99,6 +108,7 @@ export default function CraftSuggest() {
         quantity: String(quantity),
         minVol: String(minVol),
         volPeriod,
+        incomplete: incomplete ? "1" : "0",
         sort: sortBy,
       });
       const res = await fetch(`/api/craft-suggest?${params}`);
@@ -117,13 +127,24 @@ export default function CraftSuggest() {
     <div className="space-y-4">
       <div className="space-y-3 rounded-xl border border-ao-border bg-ao-panel p-4">
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <Field label="City (buy mats + sell)">
+          <Field label="Buy city (materials)">
             <select
-              value={city}
-              onChange={(e) => setCity(e.target.value)}
+              value={buyCity}
+              onChange={(e) => setBuyCity(e.target.value)}
               className="w-full rounded border border-ao-border bg-ao-bg px-2 py-1.5 text-sm text-white"
             >
               {TRADE_CITIES.map((c) => (
+                <option key={c}>{c}</option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Sell city (product)">
+            <select
+              value={sellCity}
+              onChange={(e) => setSellCity(e.target.value)}
+              className="w-full rounded border border-ao-border bg-ao-bg px-2 py-1.5 text-sm text-white"
+            >
+              {CITIES.map((c) => (
                 <option key={c}>{c}</option>
               ))}
             </select>
@@ -154,6 +175,14 @@ export default function CraftSuggest() {
               onChange={(e) => setUseJournals(e.target.checked)}
             />
             Include journal value
+          </label>
+          <label className="flex items-center gap-2 text-sm text-white sm:col-span-2">
+            <input
+              type="checkbox"
+              checked={incomplete}
+              onChange={(e) => setIncomplete(e.target.checked)}
+            />
+            Show items missing price data (open one to enter prices)
           </label>
         </div>
 
@@ -190,7 +219,7 @@ export default function CraftSuggest() {
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="text-sm text-ao-muted">
             {rows.length} shown · {meta.priced} priced variants from {meta.scanned}{" "}
-            craftables in {city}.
+            craftables · {buyCity} → {sellCity}.
           </div>
           <div className="flex items-center gap-2 text-xs text-ao-muted">
             Sort by
@@ -266,17 +295,17 @@ export default function CraftSuggest() {
                   <td className="px-3 py-2 text-right text-ao-muted">
                     {r.journalProfit > 0 ? `+${fmt(r.journalProfit)}` : "—"}
                   </td>
-                  <td className={`px-3 py-2 text-right font-medium ${r.profit >= 0 ? "text-ao-green" : "text-ao-red"}`}>
+                  <td className={`px-3 py-2 text-right font-medium ${tone(r.profit)}`}>
                     {fmt(r.profit)}
                   </td>
-                  <td className={`px-3 py-2 text-right ${r.total >= 0 ? "text-ao-green" : "text-ao-red"}`}>
+                  <td className={`px-3 py-2 text-right ${tone(r.total)}`}>
                     {fmt(r.total)}
                   </td>
-                  <td className={`px-3 py-2 text-right ${r.margin >= 0 ? "text-ao-green" : "text-ao-red"}`}>
-                    {(r.margin * 100).toFixed(0)}%
+                  <td className={`px-3 py-2 text-right ${tone(r.margin)}`}>
+                    {r.margin == null ? "—" : `${(r.margin * 100).toFixed(0)}%`}
                   </td>
                   <td className="px-3 py-2 text-right text-ao-muted">
-                    {r.volume >= 0 ? r.volume.toFixed(1) : "—"}
+                    {r.complete ? r.volume.toFixed(1) : "—"}
                   </td>
                   <td className="px-3 py-2 text-right text-ao-muted">{ageOf(r.sellDate)}</td>
                 </tr>
@@ -291,15 +320,19 @@ export default function CraftSuggest() {
         journal value − material cost (after return rate). Journal value uses live
         empty/full journal prices; <strong>Total ×{quantity}</strong> scales by your
         craft quantity (≈ {fmt(rows[0]?.journals ?? 0)} journals filled for the top
-        row). Sold/day is the average daily volume in {city} over the last ~month.
-        Click any row to open its recipe and edit prices. Prices are crowd-sourced
-        and may be stale.
+        row). Materials are bought in {buyCity}; the product is sold in {sellCity}
+        {sellCity === "Black Market" ? " (instant-sell, tax only)" : ""}. Sold/day
+        is the average daily volume in {sellCity}. Click any row to open its recipe
+        and edit prices — handy for {""}
+        <strong>items missing data</strong>. Prices are crowd-sourced and may be
+        stale.
       </p>
 
       {detail && (
         <CraftDetailModal
           target={detail}
-          city={city}
+          buyCity={buyCity}
+          sellCity={sellCity}
           rr={returnRate / 100}
           tax={salesTax / 100}
           fee={setupFee / 100}

@@ -67,7 +67,11 @@ export async function GET(req: NextRequest) {
   const tiers = csv(sp.get("tiers"), "4,5,6,7,8").map(Number).filter((n) => n >= 1 && n <= 8);
   const qualities = csv(sp.get("qualities"), "1").map(Number).filter((q) => q >= 1 && q <= 5);
   const enchants = csv(sp.get("enchants"), "0").map(Number).filter((e) => e >= 0 && e <= 3);
-  const city = sp.get("city") ?? "Caerleon";
+  // Buy materials in one city; sell the product in another (or the Black Market).
+  const buyCity = sp.get("buyCity") ?? sp.get("city") ?? "Caerleon";
+  const sellCity = sp.get("sellCity") ?? sp.get("city") ?? buyCity;
+  const sellToBM = sellCity === "Black Market";
+  const includeIncomplete = sp.get("incomplete") === "1";
   const rr = Math.max(0, Math.min(0.5, Number(sp.get("rr") ?? "0.152")));
   const tax = Number(sp.get("tax") ?? "0.04");
   const fee = Number(sp.get("fee") ?? "0.025");
@@ -136,33 +140,49 @@ export async function GET(req: NextRequest) {
   const priceBatches: string[][] = [];
   for (let i = 0; i < allIds.length; i += BATCH) priceBatches.push(allIds.slice(i, i + BATCH));
 
+  // Fetch both cities at once; pick the right city per role afterwards.
+  const locations = Array.from(new Set([buyCity, sellCity])).join(",");
   let rows: PriceRow[];
   try {
     rows = (
-      await runPool(priceBatches.map((b) => () => fetchPrices(b, city, qualitiesParam)), CONCURRENCY)
+      await runPool(priceBatches.map((b) => () => fetchPrices(b, locations, qualitiesParam)), CONCURRENCY)
     ).flat();
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : "scan failed" }, { status: 502 });
   }
 
-  const price = new Map<string, Map<number, number>>();
-  const pdate = new Map<string, Map<number, string>>();
+  // market[`${id}|${q}|${city}`] = { sellMin, buyMax, date }
+  const market = new Map<string, { sellMin?: number; buyMax?: number; date: string }>();
   for (const r of rows) {
-    if (!isPriced(r.sell_price_min)) continue;
-    (price.get(r.item_id) ?? price.set(r.item_id, new Map()).get(r.item_id)!).set(r.quality, r.sell_price_min);
-    (pdate.get(r.item_id) ?? pdate.set(r.item_id, new Map()).get(r.item_id)!).set(r.quality, r.sell_price_min_date);
+    const key = `${r.item_id}|${r.quality}|${r.city}`;
+    const cur = market.get(key) ?? { date: "" };
+    if (isPriced(r.sell_price_min)) {
+      cur.sellMin = r.sell_price_min;
+      cur.date = r.sell_price_min_date;
+    }
+    if (isPriced(r.buy_price_max)) {
+      cur.buyMax = r.buy_price_max;
+      if (!cur.date) cur.date = r.buy_price_max_date;
+    }
+    market.set(key, cur);
   }
-  const priceAt = (id: string, q: number) => price.get(id)?.get(q);
+  const buyPrice = (id: string, q: number) => market.get(`${id}|${q}|${buyCity}`)?.sellMin;
+  // What you receive selling the product: list a sell order in a city, or instant-sell to the BM.
+  const sellQuote = (id: string, q: number) => {
+    const m = market.get(`${id}|${q}|${sellCity}`);
+    if (!m) return undefined;
+    return sellToBM ? { price: m.buyMax, date: m.date } : { price: m.sellMin, date: m.date };
+  };
 
   interface Variant {
     id: string; name: string; tier: number; enchant: number; quality: number;
     journal: string | null; fame: number;
-    sell: number; sellDate: string; matCost: number; net: number;
-    journalProfit: number; profit: number; total: number; journals: number;
-    margin: number; volume: number;
+    sell: number | null; sellDate: string; matCost: number | null; net: number | null;
+    journalProfit: number; profit: number | null; total: number | null; journals: number;
+    margin: number | null; volume: number; complete: boolean;
   }
   const variants: Variant[] = [];
-  let missing = 0;
+  let incompleteCount = 0;
 
   for (const it of items) {
     for (const e of enchants) {
@@ -170,24 +190,24 @@ export async function GET(req: NextRequest) {
       if (!r) continue;
       const productId = it.id + (e > 0 ? `@${e}` : "");
 
-      // Material cost after return rate (materials are normal quality).
-      let matCost = 0;
-      let incomplete = false;
+      // Material cost after return rate (materials bought in buyCity, normal quality).
+      let matSum = 0;
+      let matMissing = false;
       for (const res of r.res) {
-        const p = priceAt(res.id, 1);
-        if (!isPriced(p)) { incomplete = true; break; }
-        matCost += p * res.count * (1 - rr);
+        const p = buyPrice(res.id, 1);
+        if (!isPriced(p)) { matMissing = true; break; }
+        matSum += p * res.count * (1 - rr);
       }
-      if (incomplete) continue;
-      const totalCost = matCost + r.silver;
+      const matCost = matMissing ? null : matSum;
+      const totalCost = matMissing ? null : matSum + r.silver;
 
-      // Journal value per fame, and journals filled for the chosen quantity.
+      // Journal value per fame (empty bought + full sold in buyCity).
       let perFame = 0;
       if (useJournals && r.journal && r.fame) {
         const base = `T${it.tier}_JOURNAL_${r.journal}`;
         const maxFame = JOURNALS[r.journal]?.[it.tier];
-        const full = priceAt(`${base}_FULL`, 1);
-        const empty = priceAt(base, 1);
+        const full = buyPrice(`${base}_FULL`, 1);
+        const empty = buyPrice(base, 1);
         if (maxFame && isPriced(full)) {
           const emptyCost = isPriced(empty) ? empty : 0;
           perFame = (full * (1 - tax - fee) - emptyCost) / maxFame;
@@ -198,35 +218,50 @@ export async function GET(req: NextRequest) {
       const journalsFilled = maxFame ? (r.fame * quantity) / maxFame : 0;
 
       for (const q of qualities) {
-        const productPrice = priceAt(productId, q);
-        if (!isPriced(productPrice)) { missing++; continue; }
-        const revenue = productPrice * r.amount * (1 - tax - fee);
-        const profitPerCraft = revenue + journalProfitPerCraft - totalCost;
-        const profit = profitPerCraft / r.amount;
+        const quote = sellQuote(productId, q);
+        const productPrice = quote?.price;
+        const productOk = isPriced(productPrice);
+        const complete = !matMissing && productOk;
+        if (!complete && !includeIncomplete) { incompleteCount++; continue; }
+        if (!complete) incompleteCount++;
+
+        // Black Market = instant sell (tax only, no setup fee).
+        const feeMul = sellToBM ? 1 - tax : 1 - tax - fee;
+        const revenue = productOk ? productPrice! * r.amount * feeMul : null;
+        const profitPerCraft =
+          complete ? revenue! + journalProfitPerCraft - totalCost! : null;
+        const amount = r.amount || 1;
         variants.push({
           id: productId, name: displayName(it.id), tier: it.tier, enchant: e, quality: q,
           journal: r.journal, fame: r.fame,
-          sell: productPrice, sellDate: pdate.get(productId)?.get(q) ?? "",
-          matCost: matCost / r.amount, net: revenue / r.amount,
-          journalProfit: journalProfitPerCraft / r.amount,
-          profit, total: profit * quantity, journals: journalsFilled,
-          margin: totalCost > 0 ? profitPerCraft / totalCost : 0,
-          volume: 0,
+          sell: productOk ? productPrice! : null,
+          sellDate: quote?.date ?? "",
+          matCost: matCost != null ? matCost / amount : null,
+          net: revenue != null ? revenue / amount : null,
+          journalProfit: journalProfitPerCraft / amount,
+          profit: profitPerCraft != null ? profitPerCraft / amount : null,
+          total: profitPerCraft != null ? (profitPerCraft / amount) * quantity : null,
+          journals: journalsFilled,
+          margin: profitPerCraft != null && totalCost ? profitPerCraft / totalCost : null,
+          volume: 0, complete,
         });
       }
     }
   }
 
-  // Sales volume for the strongest candidates (avg items sold per day in `city`).
-  variants.sort((a, b) => b.profit - a.profit);
+  // Rank complete variants by profit first; incomplete (manual-entry) ones last.
+  const rank = (v: Variant) => (v.profit == null ? -Infinity : v.profit);
+  variants.sort((a, b) => rank(b) - rank(a));
   const candidates = variants.slice(0, VOL_CANDIDATES);
+
+  // Sales volume where you sell (avg items sold per day).
   const volIds = Array.from(new Set(candidates.map((v) => v.id)));
   const volBatches: string[][] = [];
   for (let i = 0; i < volIds.length; i += BATCH) volBatches.push(volIds.slice(i, i + BATCH));
   const histSeries = (
-    await runPool(volBatches.map((b) => () => fetchHistory(b, city, qualitiesParam)), CONCURRENCY)
+    await runPool(volBatches.map((b) => () => fetchHistory(b, sellCity, qualitiesParam)), CONCURRENCY)
   ).flat();
-  const volume = new Map<string, number>(); // `${id}|${quality}` -> avg daily volume
+  const volume = new Map<string, number>();
   for (const s of histSeries) {
     if (!s.data?.length) continue;
     const avg = s.data.reduce((sum, d) => sum + d.item_count, 0) / s.data.length;
@@ -234,18 +269,22 @@ export async function GET(req: NextRequest) {
   }
   for (const v of candidates) v.volume = volume.get(`${v.id}|${v.quality}`) ?? 0;
 
-  // Volume filter applies only to the candidates we have volume for.
   let result = candidates;
-  if (minDaily > 0) result = result.filter((v) => v.volume >= minDaily);
+  if (minDaily > 0) result = result.filter((v) => v.complete && v.volume >= minDaily);
 
-  result.sort((a, b) => b[sort] - a[sort]);
+  const sortKey = (v: Variant) => {
+    const x = v[sort];
+    return x == null ? -Infinity : x;
+  };
+  result.sort((a, b) => sortKey(b) - sortKey(a));
 
   return NextResponse.json({
     results: result.slice(0, 100),
     scanned: items.length,
-    priced: variants.length,
-    missing,
-    city,
+    priced: variants.filter((v) => v.complete).length,
+    incomplete: incompleteCount,
+    buyCity,
+    sellCity,
     quantity,
   });
 }
