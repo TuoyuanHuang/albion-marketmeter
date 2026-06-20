@@ -79,7 +79,8 @@ export async function GET(req: NextRequest) {
   const quantity = Math.max(1, Number(sp.get("quantity") ?? "100"));
   const minVol = Math.max(0, Number(sp.get("minVol") ?? "0"));
   const volPeriod = sp.get("volPeriod") === "week" ? "week" : "day";
-  const minDaily = volPeriod === "week" ? minVol / 7 : minVol;
+  // Volume is reported and filtered in the selected period's units (×7 for a week).
+  const volMult = volPeriod === "week" ? 7 : 1;
   const sort = (["profit", "margin", "total"] as const).includes(
     sp.get("sort") as never
   )
@@ -277,12 +278,14 @@ export async function GET(req: NextRequest) {
     );
   }
   for (const v of candidates) {
-    v.volume = volume.get(`${v.id}|${v.quality}`) ?? 0;
+    // Daily average × period multiplier → volume in the selected unit (per day/week).
+    v.volume = (volume.get(`${v.id}|${v.quality}`) ?? 0) * volMult;
     v.avgSell = avgSell.get(`${v.id}|${v.quality}`) ?? null;
   }
 
+  // Filter uses the same period units as the column, so the input and column agree.
   let result = candidates;
-  if (minDaily > 0) result = result.filter((v) => v.complete && v.volume >= minDaily);
+  if (minVol > 0) result = result.filter((v) => v.complete && v.volume >= minVol);
 
   const sortKey = (v: Variant) => {
     const x = v[sort];
@@ -298,5 +301,6 @@ export async function GET(req: NextRequest) {
     buyCity,
     sellCity,
     quantity,
+    volPeriod,
   });
 }

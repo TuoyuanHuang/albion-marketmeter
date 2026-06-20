@@ -70,6 +70,8 @@ export default function CraftSuggest() {
   const [quantity, setQuantity] = useState(100);
   const [minVol, setMinVol] = useState(0);
   const [volPeriod, setVolPeriod] = useState<"day" | "week">("day");
+  // The period the currently displayed rows were scanned with (column units).
+  const [rowsPeriod, setRowsPeriod] = useState<"day" | "week">("day");
   const [incomplete, setIncomplete] = useState(false);
   const [sort, setSort] = useState<"profit" | "total" | "margin">("profit");
   const [rows, setRows] = useState<Row[]>([]);
@@ -84,7 +86,10 @@ export default function CraftSuggest() {
     setSubs((cur) => cur.filter((s) => valid.has(s)));
   }, [groups]);
 
-  async function scan(sortBy: "profit" | "total" | "margin" = sort) {
+  async function scan(
+    sortBy: "profit" | "total" | "margin" = sort,
+    period: "day" | "week" = volPeriod
+  ) {
     if (!groups.length || !tiers.length || !qualities.length || !enchants.length) {
       setErr("Select at least one category, tier, quality and enchantment.");
       return;
@@ -108,7 +113,7 @@ export default function CraftSuggest() {
         journals: useJournals ? "1" : "0",
         quantity: String(quantity),
         minVol: String(minVol),
-        volPeriod,
+        volPeriod: period,
         incomplete: incomplete ? "1" : "0",
         sort: sortBy,
       });
@@ -116,6 +121,7 @@ export default function CraftSuggest() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || `API ${res.status}`);
       setRows(data.results as Row[]);
+      setRowsPeriod(period);
       setMeta({ scanned: data.scanned, priced: data.priced });
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Scan failed");
@@ -161,7 +167,12 @@ export default function CraftSuggest() {
               />
               <select
                 value={volPeriod}
-                onChange={(e) => setVolPeriod(e.target.value as "day" | "week")}
+                onChange={(e) => {
+                  const p = e.target.value as "day" | "week";
+                  setVolPeriod(p);
+                  // Re-scan so the volume column and the filter both use the new unit.
+                  if (meta) scan(sort, p);
+                }}
                 className="rounded border border-ao-border bg-ao-bg px-1 py-1.5 text-sm text-white"
               >
                 <option value="day">/day</option>
@@ -265,7 +276,7 @@ export default function CraftSuggest() {
                 >
                   Avg sell
                 </th>
-                <th className="px-3 py-2 text-right">Sold/day</th>
+                <th className="px-3 py-2 text-right">Sold/{rowsPeriod}</th>
                 <th className="px-3 py-2 text-right">Updated</th>
               </tr>
             </thead>
@@ -348,8 +359,9 @@ export default function CraftSuggest() {
         empty/full journal prices; <strong>Total ×{quantity}</strong> scales by your
         craft quantity (≈ {fmt(rows[0]?.journals ?? 0)} journals filled for the top
         row). Materials are bought in {buyCity}; the product is sold in {sellCity}
-        {sellCity === "Black Market" ? " (instant-sell, tax only)" : ""}. Sold/day
-        is the average daily volume in {sellCity}. Click any row to open its recipe
+        {sellCity === "Black Market" ? " (instant-sell, tax only)" : ""}. Sold/
+        {rowsPeriod} is the average volume in {sellCity} (per {rowsPeriod}). Click
+        any row to open its recipe
         and edit prices — handy for {""}
         <strong>items missing data</strong>. Prices are crowd-sourced and may be
         stale.
