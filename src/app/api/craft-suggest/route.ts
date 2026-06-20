@@ -179,7 +179,7 @@ export async function GET(req: NextRequest) {
     journal: string | null; fame: number;
     sell: number | null; sellDate: string; matCost: number | null; net: number | null;
     journalProfit: number; profit: number | null; total: number | null; journals: number;
-    margin: number | null; volume: number; complete: boolean;
+    margin: number | null; volume: number; avgSell: number | null; complete: boolean;
   }
   const variants: Variant[] = [];
   let incompleteCount = 0;
@@ -243,7 +243,7 @@ export async function GET(req: NextRequest) {
           total: profitPerCraft != null ? (profitPerCraft / amount) * quantity : null,
           journals: journalsFilled,
           margin: profitPerCraft != null && totalCost ? profitPerCraft / totalCost : null,
-          volume: 0, complete,
+          volume: 0, avgSell: null, complete,
         });
       }
     }
@@ -262,12 +262,24 @@ export async function GET(req: NextRequest) {
     await runPool(volBatches.map((b) => () => fetchHistory(b, sellCity, qualitiesParam)), CONCURRENCY)
   ).flat();
   const volume = new Map<string, number>();
+  const avgSell = new Map<string, number>(); // volume-weighted average sell price
   for (const s of histSeries) {
     if (!s.data?.length) continue;
-    const avg = s.data.reduce((sum, d) => sum + d.item_count, 0) / s.data.length;
-    volume.set(`${s.item_id}|${s.quality}`, avg);
+    const key = `${s.item_id}|${s.quality}`;
+    const totalVol = s.data.reduce((sum, d) => sum + d.item_count, 0);
+    volume.set(key, totalVol / s.data.length);
+    const weighted = s.data.reduce((sum, d) => sum + d.avg_price * d.item_count, 0);
+    avgSell.set(
+      key,
+      totalVol > 0
+        ? weighted / totalVol
+        : s.data.reduce((sum, d) => sum + d.avg_price, 0) / s.data.length
+    );
   }
-  for (const v of candidates) v.volume = volume.get(`${v.id}|${v.quality}`) ?? 0;
+  for (const v of candidates) {
+    v.volume = volume.get(`${v.id}|${v.quality}`) ?? 0;
+    v.avgSell = avgSell.get(`${v.id}|${v.quality}`) ?? null;
+  }
 
   let result = candidates;
   if (minDaily > 0) result = result.filter((v) => v.complete && v.volume >= minDaily);

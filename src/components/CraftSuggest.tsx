@@ -51,6 +51,7 @@ interface Row {
   journals: number;
   margin: number | null;
   volume: number;
+  avgSell: number | null;
   complete: boolean;
 }
 
@@ -258,6 +259,12 @@ export default function CraftSuggest() {
                 <th className="px-3 py-2 text-right">Profit/ea</th>
                 <th className="px-3 py-2 text-right">Total ×{quantity}</th>
                 <th className="px-3 py-2 text-right">Margin</th>
+                <th
+                  className="px-3 py-2 text-right"
+                  title="Volume-weighted average sell price over ~the last month (history). Compare with the current sell — a big gap means the current quote may be a one-off."
+                >
+                  Avg sell
+                </th>
                 <th className="px-3 py-2 text-right">Sold/day</th>
                 <th className="px-3 py-2 text-right">Updated</th>
               </tr>
@@ -303,6 +310,26 @@ export default function CraftSuggest() {
                   </td>
                   <td className={`px-3 py-2 text-right ${tone(r.margin)}`}>
                     {r.margin == null ? "—" : `${(r.margin * 100).toFixed(0)}%`}
+                  </td>
+                  <td
+                    className="px-3 py-2 text-right text-ao-muted"
+                    title={
+                      r.sell != null && r.avgSell != null
+                        ? `Current sell ${fmt(r.sell)} vs avg ${fmt(r.avgSell)}`
+                        : undefined
+                    }
+                  >
+                    {fmt(r.avgSell)}
+                    {r.sell != null &&
+                      r.avgSell != null &&
+                      r.sell > r.avgSell * 1.3 && (
+                        <span
+                          className="ml-1 text-ao-red"
+                          title="Current sell is well above the average — the quote may be a one-off; profit could be optimistic."
+                        >
+                          ↑
+                        </span>
+                      )}
                   </td>
                   <td className="px-3 py-2 text-right text-ao-muted">
                     {r.complete ? r.volume.toFixed(1) : "—"}
