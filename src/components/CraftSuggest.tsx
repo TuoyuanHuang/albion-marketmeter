@@ -10,6 +10,7 @@ import {
   ageOf,
 } from "@/lib/albion";
 import ChipGroup from "@/components/ChipGroup";
+import CraftDetailModal, { DetailTarget } from "@/components/CraftDetailModal";
 import {
   CRAFT_GROUPS,
   availableSubs,
@@ -66,6 +67,7 @@ export default function CraftSuggest() {
   const [meta, setMeta] = useState<{ scanned: number; priced: number } | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [detail, setDetail] = useState<DetailTarget | null>(null);
 
   const subOptions = availableSubs(groups);
   useEffect(() => {
@@ -233,7 +235,17 @@ export default function CraftSuggest() {
             </thead>
             <tbody>
               {rows.map((r) => (
-                <tr key={`${r.id}-${r.quality}`} className="border-t border-ao-border hover:bg-ao-panel/50">
+                <tr
+                  key={`${r.id}-${r.quality}`}
+                  onClick={() =>
+                    setDetail({
+                      item: r.id.split("@")[0],
+                      enchant: r.enchant,
+                      quality: r.quality,
+                    })
+                  }
+                  className="cursor-pointer border-t border-ao-border hover:bg-ao-panel/50"
+                >
                   <td className="px-3 py-2">
                     <span className="text-ao-gold">
                       T{r.tier}
@@ -280,8 +292,22 @@ export default function CraftSuggest() {
         empty/full journal prices; <strong>Total ×{quantity}</strong> scales by your
         craft quantity (≈ {fmt(rows[0]?.journals ?? 0)} journals filled for the top
         row). Sold/day is the average daily volume in {city} over the last ~month.
-        Prices are crowd-sourced and may be stale.
+        Click any row to open its recipe and edit prices. Prices are crowd-sourced
+        and may be stale.
       </p>
+
+      {detail && (
+        <CraftDetailModal
+          target={detail}
+          city={city}
+          rr={returnRate / 100}
+          tax={salesTax / 100}
+          fee={setupFee / 100}
+          quantity={quantity}
+          useJournals={useJournals}
+          onClose={() => setDetail(null)}
+        />
+      )}
     </div>
   );
 }
