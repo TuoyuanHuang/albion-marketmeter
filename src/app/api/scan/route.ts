@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { AODP_BASE, PriceRow, isPriced } from "@/lib/albion";
+import { AODP_BASE, PriceRow, HistorySeries, isPriced } from "@/lib/albion";
 import { itemsForScan, displayName, type Item } from "@/lib/items";
 
 // GET /api/scan?groups=resources,weapons&tiers=4,5,6&marketA=Caerleon
@@ -47,6 +47,25 @@ async function fetchBatch(
   });
   if (!res.ok) throw new Error(`upstream ${res.status}`);
   return (await res.json()) as PriceRow[];
+}
+
+async function fetchHistory(
+  ids: string[],
+  locations: string,
+  qualities: string
+): Promise<HistorySeries[]> {
+  const url = new URL(
+    `${AODP_BASE}/history/${ids.map(encodeURIComponent).join(",")}`
+  );
+  url.searchParams.set("qualities", qualities);
+  url.searchParams.set("locations", locations);
+  url.searchParams.set("time-scale", "24"); // daily resolution
+  const res = await fetch(url, {
+    headers: { "User-Agent": "albion-market-app" },
+    next: { revalidate: 600 },
+  });
+  if (!res.ok) return [];
+  return (await res.json()) as HistorySeries[];
 }
 
 const csv = (v: string | null, fallback: string) =>
@@ -166,6 +185,7 @@ export async function GET(req: NextRequest) {
           to: string;
           buy: number;
           sell: number;
+          sellGross: number;
           profit: number;
           buyDate: string;
           sellDate: string;
@@ -185,6 +205,10 @@ export async function GET(req: NextRequest) {
               to: dst,
               buy,
               sell,
+              // Gross destination price the sell relies on (before fees).
+              sellGross: isBM(dst)
+                ? dstRow!.buy_price_max
+                : dstRow!.sell_price_min,
               profit,
               // Timestamps of the exact quotes this flip relies on.
               buyDate: srcRow!.sell_price_min_date,
@@ -209,6 +233,7 @@ export async function GET(req: NextRequest) {
             aDate,
             bDate,
             margin: best.profit / best.buy,
+            avgSell: null as number | null, // daily avg at the sell market (filled below)
           });
         }
       }
@@ -216,9 +241,45 @@ export async function GET(req: NextRequest) {
   }
 
   results.sort((a, b) => b[sort] - a[sort]);
+  const top = results.slice(0, 100);
+
+  // Daily average sell price at each flip's destination market (volume-weighted
+  // history). Fetched only for the items actually shown.
+  const histIds = Array.from(new Set(top.map((r) => r.id)));
+  if (histIds.length) {
+    const histBatches: string[][] = [];
+    for (let i = 0; i < histIds.length; i += BATCH)
+      histBatches.push(histIds.slice(i, i + BATCH));
+    let hist: HistorySeries[] = [];
+    try {
+      hist = (
+        await runPool(
+          histBatches.map((b) => () => fetchHistory(b, locations, qParam)),
+          CONCURRENCY
+        )
+      ).flat();
+    } catch {
+      hist = [];
+    }
+    // id|quality|location -> volume-weighted average daily price.
+    const avg = new Map<string, number>();
+    for (const s of hist) {
+      if (!s.data?.length) continue;
+      const totalVol = s.data.reduce((sum, d) => sum + d.item_count, 0);
+      const wAvg =
+        totalVol > 0
+          ? s.data.reduce((sum, d) => sum + d.avg_price * d.item_count, 0) /
+            totalVol
+          : s.data.reduce((sum, d) => sum + d.avg_price, 0) / s.data.length;
+      avg.set(`${s.item_id}|${s.quality}|${s.location}`, wAvg);
+    }
+    for (const r of top) {
+      r.avgSell = avg.get(`${r.id}|${r.quality}|${r.to}`) ?? null;
+    }
+  }
 
   return NextResponse.json({
-    results: results.slice(0, 100),
+    results: top,
     scanned: items.length,
     variants: items.length * enchants.length * qualities.length,
     marketA,

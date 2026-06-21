@@ -31,8 +31,10 @@ interface ScanRow {
   to: string;
   buy: number;
   sell: number;
+  sellGross: number;
   profit: number;
   margin: number;
+  avgSell: number | null;
   aDate: string;
   bDate: string;
 }
@@ -230,6 +232,12 @@ export default function FlipScanner() {
                 <th className="px-3 py-2">Route</th>
                 <th className="px-3 py-2 text-right">Buy</th>
                 <th className="px-3 py-2 text-right">Sell (net)</th>
+                <th
+                  className="px-3 py-2 text-right"
+                  title="Volume-weighted daily average sell price at the destination market (history). Compare with the current sell — if it's far below, the current quote may be a one-off that won't fill."
+                >
+                  Avg sell/day
+                </th>
                 <th className="px-3 py-2 text-right">Profit</th>
                 <th className="px-3 py-2 text-right">Margin</th>
                 <th className="px-3 py-2 text-right">
@@ -263,6 +271,24 @@ export default function FlipScanner() {
                   </td>
                   <td className="px-3 py-2 text-right">{fmt(r.buy)}</td>
                   <td className="px-3 py-2 text-right">{fmt(r.sell)}</td>
+                  <td
+                    className="px-3 py-2 text-right text-ao-muted"
+                    title={
+                      r.avgSell != null
+                        ? `Current sell ${fmt(r.sellGross)} vs daily avg ${fmt(r.avgSell)} at ${r.to}`
+                        : undefined
+                    }
+                  >
+                    {fmt(r.avgSell)}
+                    {r.avgSell != null && r.sellGross > r.avgSell * 1.3 && (
+                      <span
+                        className="ml-1 text-ao-red"
+                        title="The current sell quote is well above the daily average — it may be a one-off listing that won't actually fill at this price."
+                      >
+                        ↑
+                      </span>
+                    )}
+                  </td>
                   <td className="px-3 py-2 text-right font-medium text-ao-green">
                     {fmt(r.profit)}
                   </td>
@@ -284,7 +310,10 @@ export default function FlipScanner() {
 
       <p className="text-xs text-ao-muted">
         City sells assume listing a sell order (tax + setup fee); the Black Market
-        assumes an instant sell into its buy orders (tax only). Prices are
+        assumes an instant sell into its buy orders (tax only).{" "}
+        <strong>Avg sell/day</strong> is the volume-weighted daily average price at
+        the destination market — a ↑ flag means the current sell quote sits well
+        above it, so the flip may not actually fill at that price. Prices are
         crowd-sourced and may be stale — verify in-game before trading.
       </p>
     </div>
