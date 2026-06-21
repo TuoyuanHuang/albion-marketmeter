@@ -35,6 +35,8 @@ interface ScanRow {
   profit: number;
   margin: number;
   avgSell: number | null;
+  vol: number | null;
+  volTotal: number | null;
   aDate: string;
   bDate: string;
 }
@@ -238,6 +240,14 @@ export default function FlipScanner() {
                 >
                   Avg sell/day
                 </th>
+                <th
+                  className="px-3 py-2 text-right"
+                  title="Average items traded per day at the destination market (history). For a Black Market destination this is roughly how many it buys per day — higher means your sell is more likely to actually go through."
+                >
+                  {used?.a === "Black Market" || used?.b === "Black Market"
+                    ? "BM buys/day"
+                    : "Traded/day"}
+                </th>
                 <th className="px-3 py-2 text-right">Profit</th>
                 <th className="px-3 py-2 text-right">Margin</th>
                 <th className="px-3 py-2 text-right">
@@ -289,6 +299,16 @@ export default function FlipScanner() {
                       </span>
                     )}
                   </td>
+                  <td
+                    className="px-3 py-2 text-right text-ao-muted"
+                    title={
+                      r.volTotal != null
+                        ? `≈ ${fmt(r.volTotal)} traded at ${r.to} over the history window (~last month)`
+                        : undefined
+                    }
+                  >
+                    {r.vol == null ? "—" : fmt(r.vol)}
+                  </td>
                   <td className="px-3 py-2 text-right font-medium text-ao-green">
                     {fmt(r.profit)}
                   </td>
@@ -313,8 +333,12 @@ export default function FlipScanner() {
         assumes an instant sell into its buy orders (tax only).{" "}
         <strong>Avg sell/day</strong> is the volume-weighted daily average price at
         the destination market — a ↑ flag means the current sell quote sits well
-        above it, so the flip may not actually fill at that price. Prices are
-        crowd-sourced and may be stale — verify in-game before trading.
+        above it, so the flip may not actually fill at that price.{" "}
+        <strong>BM buys/day</strong> (or Traded/day) is the average quantity traded
+        per day at the destination over ~the last month — for the Black Market,
+        roughly how many it buys daily, so higher means your sell is more likely to
+        go through (hover for the window total). Prices are crowd-sourced and may be
+        stale — verify in-game before trading.
       </p>
     </div>
   );

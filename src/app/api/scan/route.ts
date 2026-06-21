@@ -233,7 +233,10 @@ export async function GET(req: NextRequest) {
             aDate,
             bDate,
             margin: best.profit / best.buy,
-            avgSell: null as number | null, // daily avg at the sell market (filled below)
+            // History-derived stats at the sell market (filled in below).
+            avgSell: null as number | null, // volume-weighted daily avg price
+            vol: null as number | null, // avg items traded per day
+            volTotal: null as number | null, // total items traded over the window
           });
         }
       }
@@ -261,20 +264,32 @@ export async function GET(req: NextRequest) {
     } catch {
       hist = [];
     }
-    // id|quality|location -> volume-weighted average daily price.
-    const avg = new Map<string, number>();
+    // id|quality|location -> { avg price, avg daily volume, total volume }.
+    const stat = new Map<
+      string,
+      { avg: number; vol: number; total: number }
+    >();
     for (const s of hist) {
       if (!s.data?.length) continue;
-      const totalVol = s.data.reduce((sum, d) => sum + d.item_count, 0);
+      const total = s.data.reduce((sum, d) => sum + d.item_count, 0);
       const wAvg =
-        totalVol > 0
+        total > 0
           ? s.data.reduce((sum, d) => sum + d.avg_price * d.item_count, 0) /
-            totalVol
+            total
           : s.data.reduce((sum, d) => sum + d.avg_price, 0) / s.data.length;
-      avg.set(`${s.item_id}|${s.quality}|${s.location}`, wAvg);
+      stat.set(`${s.item_id}|${s.quality}|${s.location}`, {
+        avg: wAvg,
+        vol: total / s.data.length, // average items traded per day
+        total,
+      });
     }
     for (const r of top) {
-      r.avgSell = avg.get(`${r.id}|${r.quality}|${r.to}`) ?? null;
+      const s = stat.get(`${r.id}|${r.quality}|${r.to}`);
+      if (s) {
+        r.avgSell = s.avg;
+        r.vol = s.vol;
+        r.volTotal = s.total;
+      }
     }
   }
 
