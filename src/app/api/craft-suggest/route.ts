@@ -181,9 +181,15 @@ export async function GET(req: NextRequest) {
     sell: number | null; sellDate: string; matCost: number | null; net: number | null;
     journalProfit: number; profit: number | null; total: number | null; journals: number;
     margin: number | null; volume: number; avgSell: number | null; complete: boolean;
+    // Raw per-craft inputs kept so we can recompute the profit from the historical
+    // average sell price once it's fetched. Stripped before the response.
+    _matSum: number; _silver: number; _amount: number; _jpc: number;
   }
   const variants: Variant[] = [];
   let incompleteCount = 0;
+
+  // Fee multiplier on the sale: Black Market is instant-sell (tax only, no setup fee).
+  const feeMul = sellToBM ? 1 - tax : 1 - tax - fee;
 
   for (const it of items) {
     for (const e of enchants) {
@@ -226,8 +232,6 @@ export async function GET(req: NextRequest) {
         if (!complete && !includeIncomplete) { incompleteCount++; continue; }
         if (!complete) incompleteCount++;
 
-        // Black Market = instant sell (tax only, no setup fee).
-        const feeMul = sellToBM ? 1 - tax : 1 - tax - fee;
         const revenue = productOk ? productPrice! * r.amount * feeMul : null;
         const profitPerCraft =
           complete ? revenue! + journalProfitPerCraft - totalCost! : null;
@@ -245,6 +249,7 @@ export async function GET(req: NextRequest) {
           journals: journalsFilled,
           margin: profitPerCraft != null && totalCost ? profitPerCraft / totalCost : null,
           volume: 0, avgSell: null, complete,
+          _matSum: matSum, _silver: r.silver, _amount: amount, _jpc: journalProfitPerCraft,
         });
       }
     }
@@ -281,6 +286,19 @@ export async function GET(req: NextRequest) {
     // Daily average × period multiplier → volume in the selected unit (per day/week).
     v.volume = (volume.get(`${v.id}|${v.quality}`) ?? 0) * volMult;
     v.avgSell = avgSell.get(`${v.id}|${v.quality}`) ?? null;
+
+    // Recompute Net/Profit/Total/Margin from the historical average sell price so a
+    // single inflated listing can't distort the numbers. When there's no history we
+    // keep the current-price figures already computed above (best available).
+    if (v.complete && v.avgSell != null) {
+      const revenue = v.avgSell * v._amount * feeMul;
+      const totalCost = v._matSum + v._silver;
+      const profitPerCraft = revenue + v._jpc - totalCost;
+      v.net = revenue / v._amount;
+      v.profit = profitPerCraft / v._amount;
+      v.total = (profitPerCraft / v._amount) * quantity;
+      v.margin = totalCost ? profitPerCraft / totalCost : null;
+    }
   }
 
   // Filter uses the same period units as the column, so the input and column agree.
@@ -293,8 +311,18 @@ export async function GET(req: NextRequest) {
   };
   result.sort((a, b) => sortKey(b) - sortKey(a));
 
+  // Drop the internal recompute helpers before sending.
+  const out = result.slice(0, 100).map((v) => {
+    const c = { ...v };
+    delete (c as Partial<Variant>)._matSum;
+    delete (c as Partial<Variant>)._silver;
+    delete (c as Partial<Variant>)._amount;
+    delete (c as Partial<Variant>)._jpc;
+    return c;
+  });
+
   return NextResponse.json({
-    results: result.slice(0, 100),
+    results: out,
     scanned: items.length,
     priced: variants.filter((v) => v.complete).length,
     incomplete: incompleteCount,

@@ -272,7 +272,7 @@ export default function CraftSuggest() {
                 <th className="px-3 py-2 text-right">Margin</th>
                 <th
                   className="px-3 py-2 text-right"
-                  title="Volume-weighted average sell price over ~the last month (history). Compare with the current sell — a big gap means the current quote may be a one-off."
+                  title="Volume-weighted average sell price over ~the last month (history). This is the price used for Net, Profit, Total and Margin. The ↑ flag marks rows where the current market listing sits well above this average."
                 >
                   Avg sell
                 </th>
@@ -336,7 +336,7 @@ export default function CraftSuggest() {
                       r.sell > r.avgSell * 1.3 && (
                         <span
                           className="ml-1 text-ao-red"
-                          title="Current sell is well above the average — the quote may be a one-off; profit could be optimistic."
+                          title="The current market listing is well above this average. Profit here uses the average, so listing at the current price could sell slower."
                         >
                           ↑
                         </span>
@@ -354,8 +354,12 @@ export default function CraftSuggest() {
       )}
 
       <p className="text-xs text-ao-muted">
-        Profit/ea = product sell (net of tax + setup, at the chosen quality) +
-        journal value − material cost (after return rate). Journal value uses live
+        <strong>Net</strong> = the average sell price after market fees (tax +
+        setup). <strong>Profit/ea</strong> = Net + journal value − material cost
+        (after return rate). Net, Profit, Total and Margin use the{" "}
+        <strong>historical average sell price</strong> (the Avg sell column), not the
+        current listing, so a single inflated order can&apos;t distort them — rows
+        without history fall back to the current price. Journal value uses live
         empty/full journal prices; <strong>Total ×{quantity}</strong> scales by your
         craft quantity (≈ {fmt(rows[0]?.journals ?? 0)} journals filled for the top
         row). Materials are bought in {buyCity}; the product is sold in {sellCity}
