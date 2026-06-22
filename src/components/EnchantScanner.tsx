@@ -47,6 +47,11 @@ interface Row {
   margin: number | null;
   complete: boolean;
   sellDate: string;
+  vol: number | null;
+  volTotal: number | null;
+  lastVol: number | null;
+  lastDate: string | null;
+  recent: { d: string; n: number }[] | null;
 }
 
 export default function EnchantScanner() {
@@ -63,6 +68,8 @@ export default function EnchantScanner() {
   const [sort, setSort] = useState<"profit" | "margin">("profit");
   const [rows, setRows] = useState<Row[]>([]);
   const [meta, setMeta] = useState<{ scanned: number; priced: number } | null>(null);
+  // Sell city the displayed rows were scanned with (for the volume column header).
+  const [usedSell, setUsedSell] = useState("");
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -100,6 +107,7 @@ export default function EnchantScanner() {
       if (!res.ok) throw new Error(data.error || `API ${res.status}`);
       setRows(data.results as Row[]);
       setMeta({ scanned: data.scanned, priced: data.priced });
+      setUsedSell(data.sellCity ?? sellCity);
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Scan failed");
     } finally {
@@ -211,6 +219,12 @@ export default function EnchantScanner() {
                 <th className="px-3 py-2 text-right">Sell (net)</th>
                 <th className="px-3 py-2 text-right">Profit</th>
                 <th className="px-3 py-2 text-right">Margin</th>
+                <th
+                  className="px-3 py-2 text-right"
+                  title="Items actually sold of the enchanted item at the sell market on the last completed day (history). For a Black Market destination this is how many it bought that day — hover a cell for the date and recent days."
+                >
+                  {usedSell === "Black Market" ? "BM bought (last day)" : "Sold (last day)"}
+                </th>
                 <th className="px-3 py-2 text-right">Updated</th>
               </tr>
             </thead>
@@ -248,6 +262,24 @@ export default function EnchantScanner() {
                   <td className={`px-3 py-2 text-right ${tone(r.margin)}`}>
                     {r.margin == null ? "—" : `${(r.margin * 100).toFixed(0)}%`}
                   </td>
+                  <td
+                    className="px-3 py-2 text-right text-ao-muted"
+                    title={
+                      r.recent && r.recent.length
+                        ? `Last completed day (${r.lastDate}): ${fmt(r.lastVol)} sold at ${usedSell}\n\n` +
+                          `Actual sold per day (newest last):\n` +
+                          r.recent.map((x) => `${x.d}: ${fmt(x.n)}`).join("\n") +
+                          `\n\n~30-day avg ${fmt(r.vol)}/day · total ≈ ${fmt(r.volTotal)}`
+                        : undefined
+                    }
+                  >
+                    <span className="whitespace-nowrap">
+                      {r.lastVol == null ? "—" : fmt(r.lastVol)}
+                      {r.lastDate && (
+                        <span className="ml-1 text-[10px] text-ao-muted/70">{r.lastDate}</span>
+                      )}
+                    </span>
+                  </td>
                   <td className="px-3 py-2 text-right text-ao-muted">{ageOf(r.sellDate)}</td>
                 </tr>
               ))}
@@ -264,7 +296,10 @@ export default function EnchantScanner() {
         enchanted item is sold in {sellCity}
         {sellCity === "Black Market" ? " (instant-sell, tax only)" : ""}. Enchanting
         preserves quality, so each row buys and sells at the same quality; materials
-        are Normal quality. No station fee or resource return. Prices are
+        are Normal quality. No station fee or resource return.{" "}
+        <strong>Sold (last day)</strong> is how many of the enchanted item actually
+        traded at {sellCity} on the most recent completed day (hover for the recent
+        daily breakdown) — low volume means it may sit unsold. Prices are
         crowd-sourced and may be stale — verify in-game before committing materials.
       </p>
     </div>

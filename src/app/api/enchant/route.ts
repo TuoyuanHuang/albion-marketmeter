@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { AODP_BASE, PriceRow, isPriced } from "@/lib/albion";
+import { AODP_BASE, PriceRow, HistorySeries, isPriced } from "@/lib/albion";
 import { enchantablesForScan, getEnchant, displayName, type Item } from "@/lib/items";
 
 // GET /api/enchant?groups=weapons&tiers=4,5,6&steps=1,2,3&city=Caerleon
@@ -38,6 +38,19 @@ async function fetchPrices(ids: string[], locations: string, qualities: string) 
   });
   if (!res.ok) throw new Error(`upstream ${res.status}`);
   return (await res.json()) as PriceRow[];
+}
+
+async function fetchHistory(ids: string[], location: string, qualities: string) {
+  const url = new URL(`${AODP_BASE}/history/${ids.map(encodeURIComponent).join(",")}`);
+  url.searchParams.set("qualities", qualities);
+  url.searchParams.set("locations", location);
+  url.searchParams.set("time-scale", "24"); // daily resolution
+  const res = await fetch(url, {
+    headers: { "User-Agent": "albion-market-app" },
+    next: { revalidate: 600 },
+  });
+  if (!res.ok) return [] as HistorySeries[];
+  return (await res.json()) as HistorySeries[];
 }
 
 export async function GET(req: NextRequest) {
@@ -137,6 +150,10 @@ export async function GET(req: NextRequest) {
     matId: string; matName: string; matCount: number; matUnit: number | null; matCost: number | null;
     sellGross: number | null; sellNet: number | null; cost: number | null;
     profit: number | null; margin: number | null; complete: boolean; sellDate: string;
+    // Sales volume of the enchanted item at the sell market (history, filled below).
+    vol: number | null; volTotal: number | null;
+    lastVol: number | null; lastDate: string | null;
+    recent: { d: string; n: number }[] | null;
   }
   const results: Row[] = [];
   let incompleteCount = 0;
@@ -190,6 +207,11 @@ export async function GET(req: NextRequest) {
           margin,
           complete,
           sellDate: quote?.date ?? "",
+          vol: null,
+          volTotal: null,
+          lastVol: null,
+          lastDate: null,
+          recent: null,
         });
       }
     }
@@ -200,9 +222,62 @@ export async function GET(req: NextRequest) {
     return x == null ? -Infinity : x;
   };
   results.sort((a, b) => key(b) - key(a));
+  const top = results.slice(0, 100);
+
+  // Daily sales volume of the enchanted item at the sell market (history),
+  // fetched only for the items shown.
+  const todayUTC = new Date().toISOString().slice(0, 10);
+  const histIds = Array.from(new Set(top.map((r) => r.id)));
+  if (histIds.length) {
+    const histBatches: string[][] = [];
+    for (let i = 0; i < histIds.length; i += BATCH) histBatches.push(histIds.slice(i, i + BATCH));
+    let hist: HistorySeries[] = [];
+    try {
+      hist = (
+        await runPool(
+          histBatches.map((b) => () => fetchHistory(b, sellCity, qualitiesParam)),
+          CONCURRENCY
+        )
+      ).flat();
+    } catch {
+      hist = [];
+    }
+    // id|quality|location -> volume stats.
+    const stat = new Map<
+      string,
+      { vol: number; total: number; lastVol: number; lastDate: string; recent: { d: string; n: number }[] }
+    >();
+    for (const s of hist) {
+      if (!s.data?.length) continue;
+      const pts = [...s.data].sort((a, b) => (a.timestamp < b.timestamp ? -1 : 1));
+      const total = pts.reduce((sum, d) => sum + d.item_count, 0);
+      // Last completed day = newest point that isn't today's partial bucket.
+      const complete = pts.filter((d) => d.timestamp.slice(0, 10) < todayUTC);
+      const lastPt = (complete.length ? complete : pts)[
+        (complete.length ? complete : pts).length - 1
+      ];
+      stat.set(`${s.item_id}|${s.quality}|${s.location}`, {
+        vol: total / pts.length,
+        total,
+        lastVol: lastPt.item_count,
+        lastDate: lastPt.timestamp.slice(5, 10),
+        recent: pts.slice(-7).map((d) => ({ d: d.timestamp.slice(5, 10), n: d.item_count })),
+      });
+    }
+    for (const r of top) {
+      const s = stat.get(`${r.id}|${r.quality}|${sellCity}`);
+      if (s) {
+        r.vol = s.vol;
+        r.volTotal = s.total;
+        r.lastVol = s.lastVol;
+        r.lastDate = s.lastDate;
+        r.recent = s.recent;
+      }
+    }
+  }
 
   return NextResponse.json({
-    results: results.slice(0, 100),
+    results: top,
     scanned: items.length,
     priced: results.filter((r) => r.complete).length,
     incomplete: incompleteCount,
