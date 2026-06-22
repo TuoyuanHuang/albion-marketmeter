@@ -30,11 +30,12 @@ export const ENCHANT_GROUPS = GROUPS.filter((g) =>
   )
 );
 
-// Enchant upgrade steps (one enchant level each).
+// Enchant targets: enchant a base item all the way up to this level (chaining
+// every upgrade in between).
 export const STEP_OPTS = [
-  { value: 1, label: "Base → .1" },
-  { value: 2, label: ".1 → .2" },
-  { value: 3, label: ".2 → .3" },
+  { value: 1, label: "to .1" },
+  { value: 2, label: "to .2" },
+  { value: 3, label: "to .3" },
 ];
 
 // Subcategories per category (raw shopsubcategory1 value -> friendly label).

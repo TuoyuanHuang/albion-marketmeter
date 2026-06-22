@@ -33,14 +33,11 @@ interface Row {
   step: number;
   stepLabel: string;
   quality: number;
-  lowerId: string;
   lower: number | null;
-  matId: string;
-  matName: string;
-  matCount: number;
-  matUnit: number | null;
+  materials: { id: string; name: string; count: number; unit: number | null; cost: number | null }[];
   matCost: number | null;
   sellGross: number | null;
+  avgSell: number | null;
   sellNet: number | null;
   cost: number | null;
   profit: number | null;
@@ -164,7 +161,12 @@ export default function EnchantScanner() {
         )}
         <ChipGroup label="Tiers" options={TIER_OPTS} selected={tiers} onChange={setTiers} />
         <ChipGroup label="Qualities" options={QUALITY_OPTS} selected={qualities} onChange={setQualities} />
-        <ChipGroup label="Upgrade steps" options={STEP_OPTS} selected={steps} onChange={setSteps} />
+        <ChipGroup
+          label="Enchant to (chains all upgrades from base)"
+          options={STEP_OPTS}
+          selected={steps}
+          onChange={setSteps}
+        />
       </div>
 
       <button
@@ -213,10 +215,15 @@ export default function EnchantScanner() {
               <tr>
                 <th className="px-3 py-2">Item</th>
                 <th className="px-3 py-2">Upgrade</th>
-                <th className="px-3 py-2">Material</th>
+                <th className="px-3 py-2">Materials</th>
                 <th className="px-3 py-2 text-right">Buy item</th>
                 <th className="px-3 py-2 text-right">Mat cost</th>
-                <th className="px-3 py-2 text-right">Sell (net)</th>
+                <th
+                  className="px-3 py-2 text-right"
+                  title="Net proceeds from selling the enchanted item, using the volume-weighted historical average sell price (net of tax + setup), not the current listing."
+                >
+                  Avg sell (net)
+                </th>
                 <th className="px-3 py-2 text-right">Profit</th>
                 <th className="px-3 py-2 text-right">Margin</th>
                 <th
@@ -245,17 +252,31 @@ export default function EnchantScanner() {
                   <td className="px-3 py-2 text-ao-muted">{r.stepLabel}</td>
                   <td
                     className="px-3 py-2 text-ao-muted"
-                    title={
-                      r.matUnit != null
-                        ? `${fmt(r.matCount)} × ${r.matName} @ ${fmt(r.matUnit)} ea`
-                        : `${fmt(r.matCount)} × ${r.matName} (no price)`
-                    }
+                    title={r.materials
+                      .map(
+                        (m) =>
+                          `${fmt(m.count)} × ${m.name}${
+                            m.unit != null ? ` @ ${fmt(m.unit)} = ${fmt(m.cost)}` : " (no price)"
+                          }`
+                      )
+                      .join("\n")}
                   >
-                    {fmt(r.matCount)}× {r.matName.replace(/.*'s\s+/, "")}
+                    {r.materials.map((m) => m.name.replace(/.*'s\s+/, "")).join("+")}
                   </td>
                   <td className="px-3 py-2 text-right">{fmt(r.lower)}</td>
                   <td className="px-3 py-2 text-right">{fmt(r.matCost)}</td>
-                  <td className="px-3 py-2 text-right">{fmt(r.sellNet)}</td>
+                  <td
+                    className="px-3 py-2 text-right"
+                    title={
+                      r.avgSell != null
+                        ? `Avg sell ${fmt(r.avgSell)} (gross) · current listing ${fmt(r.sellGross)}`
+                        : r.sellGross != null
+                        ? `No history — using current listing ${fmt(r.sellGross)}`
+                        : undefined
+                    }
+                  >
+                    {fmt(r.sellNet)}
+                  </td>
                   <td className={`px-3 py-2 text-right font-medium ${tone(r.profit)}`}>
                     {fmt(r.profit)}
                   </td>
@@ -289,11 +310,14 @@ export default function EnchantScanner() {
       )}
 
       <p className="text-xs text-ao-muted">
-        Enchanting upgrades a finished item one level: <strong>Base→.1</strong> uses
-        runes, <strong>.1→.2</strong> souls, <strong>.2→.3</strong> relics. Profit =
-        enchanted sell price (net of tax + setup) − the lower item − the
-        runes/souls/relics. The lower item + materials are bought in {buyCity}; the
-        enchanted item is sold in {sellCity}
+        Each row enchants a <strong>base item all the way to the target level</strong>,
+        chaining every upgrade: <strong>.1</strong> uses runes, <strong>.2</strong>{" "}
+        adds souls, <strong>.3</strong> adds relics. Profit = enchanted sell price −
+        the base item − all the runes/souls/relics. The sell price is the{" "}
+        <strong>volume-weighted historical average</strong> (net of tax + setup), not
+        the current listing, so a single inflated order can&apos;t distort it (rows
+        without history fall back to the current price). The base item + materials are
+        bought in {buyCity}; the enchanted item is sold in {sellCity}
         {sellCity === "Black Market" ? " (instant-sell, tax only)" : ""}. Enchanting
         preserves quality, so each row buys and sells at the same quality; materials
         are Normal quality. No station fee or resource return.{" "}

@@ -91,18 +91,20 @@ export async function GET(req: NextRequest) {
   }
   if (items.length === 0) return NextResponse.json({ results: [], scanned: 0 });
 
-  // Every id we need a price for: the lower item, the higher item, and the
-  // upgrade material for each selected step.
+  // Each selected "step" N is a target: enchant a base item all the way to .N,
+  // so we price the base item, the .N item, and every material along the way
+  // (runes for .1, souls for .2, relics for .3).
   const priceIds = new Set<string>();
   for (const it of items) {
     const up = getEnchant(it.id);
     if (!up) continue;
-    for (const s of steps) {
-      const mat = up[String(s)];
-      if (!mat) continue;
-      priceIds.add(s === 1 ? it.id : `${it.id}@${s - 1}`); // lower item
-      priceIds.add(`${it.id}@${s}`); // higher (enchanted) item
-      priceIds.add(mat.id); // rune / soul / relic
+    priceIds.add(it.id); // base item
+    for (const n of steps) {
+      priceIds.add(`${it.id}@${n}`); // target (enchanted) item
+      for (let s = 1; s <= n; s++) {
+        const mat = up[String(s)];
+        if (mat) priceIds.add(mat.id); // rune / soul / relic
+      }
     }
   }
 
@@ -140,15 +142,14 @@ export async function GET(req: NextRequest) {
     return sellToBM ? { price: m.buyMax, date: m.date } : { price: m.sellMin, date: m.date };
   };
 
-  const STEP_LABEL: Record<number, string> = { 1: "Base → .1", 2: ".1 → .2", 3: ".2 → .3" };
   // Black Market = instant sell (tax only, no setup fee).
   const feeMul = sellToBM ? 1 - tax : 1 - tax - fee;
 
+  interface MatLine { id: string; name: string; count: number; unit: number | null; cost: number | null; }
   interface Row {
     id: string; name: string; tier: number; step: number; stepLabel: string; quality: number;
-    lowerId: string; lower: number | null;
-    matId: string; matName: string; matCount: number; matUnit: number | null; matCost: number | null;
-    sellGross: number | null; sellNet: number | null; cost: number | null;
+    lower: number | null; materials: MatLine[]; matCost: number | null;
+    sellGross: number | null; avgSell: number | null; sellNet: number | null; cost: number | null;
     profit: number | null; margin: number | null; complete: boolean; sellDate: string;
     // Sales volume of the enchanted item at the sell market (history, filled below).
     vol: number | null; volTotal: number | null;
@@ -161,46 +162,50 @@ export async function GET(req: NextRequest) {
   for (const it of items) {
     const up = getEnchant(it.id);
     if (!up) continue;
-    for (const s of steps) {
-      const mat = up[String(s)];
-      if (!mat) continue;
-      const lowerId = s === 1 ? it.id : `${it.id}@${s - 1}`;
-      const higherId = `${it.id}@${s}`;
-      // Material (rune/soul/relic) is always normal quality, bought in the buy city.
-      const matUnit = buyPrice(mat.id, 1) ?? null;
+    for (const n of steps) {
+      const targetId = `${it.id}@${n}`;
+      // All upgrade materials from base up to .n (runes, then souls, then relics).
+      const matSteps = [];
+      for (let s = 1; s <= n; s++) {
+        const mat = up[String(s)];
+        if (mat) matSteps.push(mat);
+      }
+      if (matSteps.length === 0) continue;
+      const materials: MatLine[] = matSteps.map((m) => {
+        const unit = buyPrice(m.id, 1) ?? null;
+        return { id: m.id, name: displayName(m.id), count: m.count, unit, cost: unit != null ? unit * m.count : null };
+      });
+      const matMissing = materials.some((m) => m.cost == null);
+      const matCost = matMissing ? null : materials.reduce((s, m) => s + (m.cost ?? 0), 0);
 
       for (const q of qualities) {
-        // Enchanting preserves quality: buy a quality-q lower item, sell a quality-q higher item.
-        const lower = buyPrice(lowerId, q) ?? null;
-        const quote = sellQuote(higherId, q);
+        // Enchanting preserves quality: buy a quality-q base item, sell a quality-q .n item.
+        const lower = buyPrice(it.id, q) ?? null;
+        const quote = sellQuote(targetId, q);
         const sellGross = quote?.price ?? null;
-        const complete = lower != null && matUnit != null && sellGross != null;
+        const complete = lower != null && !matMissing && sellGross != null;
         if (!complete) {
           incompleteCount++;
           if (!includeIncomplete) continue;
         }
 
-        const matCost = matUnit != null ? matUnit * mat.count : null;
         const cost = lower != null && matCost != null ? lower + matCost : null;
         const sellNet = sellGross != null ? sellGross * feeMul : null;
         const profit = sellNet != null && cost != null ? sellNet - cost : null;
         const margin = profit != null && cost ? profit / cost : null;
 
         results.push({
-          id: higherId,
+          id: targetId,
           name: displayName(it.id),
           tier: it.tier,
-          step: s,
-          stepLabel: STEP_LABEL[s],
+          step: n,
+          stepLabel: `Base → .${n}`,
           quality: q,
-          lowerId,
           lower,
-          matId: mat.id,
-          matName: displayName(mat.id),
-          matCount: mat.count,
-          matUnit,
+          materials,
           matCost,
           sellGross,
+          avgSell: null,
           sellNet,
           cost,
           profit,
@@ -242,21 +247,26 @@ export async function GET(req: NextRequest) {
     } catch {
       hist = [];
     }
-    // id|quality|location -> volume stats.
+    // id|quality|location -> { avg sell price + volume stats }.
     const stat = new Map<
       string,
-      { vol: number; total: number; lastVol: number; lastDate: string; recent: { d: string; n: number }[] }
+      { avg: number; vol: number; total: number; lastVol: number; lastDate: string; recent: { d: string; n: number }[] }
     >();
     for (const s of hist) {
       if (!s.data?.length) continue;
       const pts = [...s.data].sort((a, b) => (a.timestamp < b.timestamp ? -1 : 1));
       const total = pts.reduce((sum, d) => sum + d.item_count, 0);
+      const avg =
+        total > 0
+          ? pts.reduce((sum, d) => sum + d.avg_price * d.item_count, 0) / total
+          : pts.reduce((sum, d) => sum + d.avg_price, 0) / pts.length;
       // Last completed day = newest point that isn't today's partial bucket.
       const complete = pts.filter((d) => d.timestamp.slice(0, 10) < todayUTC);
       const lastPt = (complete.length ? complete : pts)[
         (complete.length ? complete : pts).length - 1
       ];
       stat.set(`${s.item_id}|${s.quality}|${s.location}`, {
+        avg,
         vol: total / pts.length,
         total,
         lastVol: lastPt.item_count,
@@ -272,8 +282,18 @@ export async function GET(req: NextRequest) {
         r.lastVol = s.lastVol;
         r.lastDate = s.lastDate;
         r.recent = s.recent;
+        r.avgSell = s.avg;
+        // Recompute profit from the historical average sell price (avoids
+        // inflated one-off listings). Falls back to the current price otherwise.
+        if (r.complete && r.cost != null) {
+          r.sellNet = s.avg * feeMul;
+          r.profit = r.sellNet - r.cost;
+          r.margin = r.cost ? r.profit / r.cost : null;
+        }
       }
     }
+    // Re-rank with the average-based profit now applied.
+    top.sort((a, b) => key(b) - key(a));
   }
 
   return NextResponse.json({
