@@ -11,6 +11,7 @@ export const dynamic = "force-dynamic";
 const BATCH = 100;
 const ITEM_CAP = 600;
 const CONCURRENCY = 6;
+const VOL_CANDIDATES = 300; // rows we fetch history for before volume-filtering
 
 async function runPool<T>(tasks: (() => Promise<T>)[], limit: number) {
   const out: T[] = new Array(tasks.length);
@@ -70,6 +71,8 @@ export async function GET(req: NextRequest) {
   const includeIncomplete = sp.get("incomplete") === "1";
   // Use the historical average sell price (default) vs the current sell order.
   const useAvg = sp.get("avg") !== "0";
+  // Min average daily sales of the enchanted item to keep a row (0 = off).
+  const minVol = Math.max(0, Number(sp.get("minVol") ?? "0"));
   const sort = sp.get("sort") === "margin" ? "margin" : "profit";
 
   if (!groups.length || !tiers.length || !steps.length || !qualities.length) {
@@ -229,12 +232,12 @@ export async function GET(req: NextRequest) {
     return x == null ? -Infinity : x;
   };
   results.sort((a, b) => key(b) - key(a));
-  const top = results.slice(0, 100);
+  // Fetch history for a wider candidate set so the volume filter has room to work.
+  const candidates = results.slice(0, VOL_CANDIDATES);
 
-  // Daily sales volume of the enchanted item at the sell market (history),
-  // fetched only for the items shown.
+  // Daily sales volume of the enchanted item at the sell market (history).
   const todayUTC = new Date().toISOString().slice(0, 10);
-  const histIds = Array.from(new Set(top.map((r) => r.id)));
+  const histIds = Array.from(new Set(candidates.map((r) => r.id)));
   if (histIds.length) {
     const histBatches: string[][] = [];
     for (let i = 0; i < histIds.length; i += BATCH) histBatches.push(histIds.slice(i, i + BATCH));
@@ -276,7 +279,7 @@ export async function GET(req: NextRequest) {
         recent: pts.slice(-7).map((d) => ({ d: d.timestamp.slice(5, 10), n: d.item_count })),
       });
     }
-    for (const r of top) {
+    for (const r of candidates) {
       const s = stat.get(`${r.id}|${r.quality}|${sellCity}`);
       if (s) {
         r.vol = s.vol;
@@ -294,9 +297,13 @@ export async function GET(req: NextRequest) {
         }
       }
     }
-    // Re-rank with the average-based profit now applied.
-    top.sort((a, b) => key(b) - key(a));
   }
+
+  // Volume filter: keep rows that actually sell enough (avg items/day).
+  let ranked = candidates;
+  if (minVol > 0) ranked = ranked.filter((r) => r.complete && r.vol != null && r.vol >= minVol);
+  ranked.sort((a, b) => key(b) - key(a));
+  const top = ranked.slice(0, 100);
 
   return NextResponse.json({
     results: top,

@@ -62,6 +62,7 @@ export default function EnchantScanner() {
   const [salesTax, setSalesTax] = useState(DEFAULT_SALES_TAX * 100);
   const [setupFee, setSetupFee] = useState(DEFAULT_SETUP_FEE * 100);
   const [useAvg, setUseAvg] = useState(true);
+  const [minVol, setMinVol] = useState(0);
   const [incomplete, setIncomplete] = useState(false);
   const [sort, setSort] = useState<"profit" | "margin">("profit");
   const [rows, setRows] = useState<Row[]>([]);
@@ -100,6 +101,7 @@ export default function EnchantScanner() {
         tax: String(salesTax / 100),
         fee: String(setupFee / 100),
         avg: useAvg ? "1" : "0",
+        minVol: String(minVol),
         incomplete: incomplete ? "1" : "0",
         sort: sortBy,
       });
@@ -145,6 +147,11 @@ export default function EnchantScanner() {
           </Field>
           <NumField label="Sales tax %" value={salesTax} onChange={setSalesTax} />
           <NumField label="Setup fee %" value={setupFee} onChange={setSetupFee} />
+          <NumField
+            label="Min sales / day (0 = off)"
+            value={minVol}
+            onChange={setMinVol}
+          />
           <label
             className="flex items-center gap-2 text-sm text-white sm:col-span-2"
             title="On: profit uses the volume-weighted historical average sell price. Off: uses the current cheapest sell order (can be an inflated one-off listing)."
@@ -344,7 +351,9 @@ export default function EnchantScanner() {
         are Normal quality. No station fee or resource return.{" "}
         <strong>Sold (last day)</strong> is how many of the enchanted item actually
         traded at {sellCity} on the most recent completed day (hover for the recent
-        daily breakdown) — low volume means it may sit unsold. Prices are
+        daily breakdown) — low volume means it may sit unsold. The{" "}
+        <strong>Min sales / day</strong> filter drops rows whose ~30-day{" "}
+        <em>average</em> daily volume is below the threshold. Prices are
         crowd-sourced and may be stale — verify in-game before committing materials.
       </p>
     </div>
