@@ -23,6 +23,20 @@ export const CRAFT_GROUPS = GROUPS.filter((g) =>
   )
 );
 
+// Gear categories that can be enchanted with runes/souls/relics.
+export const ENCHANT_GROUPS = GROUPS.filter((g) =>
+  ["weapons", "armors", "head", "shoes", "offhands", "bags", "capes"].includes(
+    g.value
+  )
+);
+
+// Enchant upgrade steps (one enchant level each).
+export const STEP_OPTS = [
+  { value: 1, label: "Base → .1" },
+  { value: 2, label: ".1 → .2" },
+  { value: 3, label: ".2 → .3" },
+];
+
 // Subcategories per category (raw shopsubcategory1 value -> friendly label).
 export const SUBGROUPS: Record<string, { value: string; label: string }[]> = {
   weapons: [

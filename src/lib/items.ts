@@ -1,6 +1,7 @@
 import itemsData from "@/data/items.json";
 import recipesData from "@/data/recipes.json";
 import journalsData from "@/data/journals.json";
+import enchantsData from "@/data/enchants.json";
 
 export interface Item {
   id: string;
@@ -64,10 +65,21 @@ export interface Recipe {
   ench?: Record<string, EnchantRecipe>; // enchant level "1".."3"
 }
 
+// One enchant upgrade step: which material (rune/soul/relic) and how many.
+export interface EnchantUpgrade {
+  id: string;
+  count: number;
+}
+
 export const ITEMS = itemsData as Item[];
 export const RECIPES = recipesData as Record<string, Recipe>;
 // PROFESSION -> tier(string) -> max journal fame.
 export const JOURNALS = journalsData as Record<string, Record<string, number>>;
+// item id -> enchant level "1".."3" -> upgrade material + count.
+export const ENCHANTS = enchantsData as Record<
+  string,
+  Record<string, EnchantUpgrade>
+>;
 
 const byId = new Map(ITEMS.map((i) => [i.id, i]));
 
@@ -76,6 +88,7 @@ const searchName = new Map(ITEMS.map((i) => [i.id, stripTierPrefix(i.name)]));
 
 export const getItem = (id: string): Item | undefined => byId.get(id);
 export const getRecipe = (id: string): Recipe | undefined => RECIPES[id];
+export const getEnchant = (id: string) => ENCHANTS[id];
 
 export const displayName = (id: string): string => byId.get(id)?.name ?? id;
 
@@ -143,6 +156,31 @@ export function itemsForScan(
   const useSubs = subs && subs.size > 0;
   const out: Item[] = [];
   for (const it of ITEMS) {
+    if (!cats.has(it.group)) continue;
+    if (tierSet.size && !tierSet.has(it.tier)) continue;
+    if (useSubs && !subs!.has(it.sub)) continue;
+    out.push(it);
+    if (out.length >= cap) break;
+  }
+  return out;
+}
+
+// Enchantable items (those with an item-enchant upgrade path) in a scan group
+// + tier set, capped.
+export function enchantablesForScan(
+  groupKey: string,
+  tiers: number[],
+  cap = 600,
+  subs?: Set<string>
+): Item[] {
+  const group = GROUP_BY_KEY.get(groupKey);
+  if (!group) return [];
+  const cats = new Set(group.cats);
+  const tierSet = new Set(tiers);
+  const useSubs = subs && subs.size > 0;
+  const out: Item[] = [];
+  for (const it of ITEMS) {
+    if (!ENCHANTS[it.id]) continue;
     if (!cats.has(it.group)) continue;
     if (tierSet.size && !tierSet.has(it.tier)) continue;
     if (useSubs && !subs!.has(it.sub)) continue;

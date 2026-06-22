@@ -92,6 +92,10 @@ async function main() {
 
   const items = [];
   const recipes = {};
+  // Item-enchanting upgrade costs: { id: { "1": {id,count}, "2": {...}, "3": {...} } }
+  // i.e. how many runes/souls/relics it takes to upgrade a finished item one
+  // enchant level (.1 uses runes, .2 souls, .3 relics).
+  const enchants = {};
   const seen = new Set();
 
   // Pass 2: items + recipes.
@@ -176,6 +180,19 @@ async function main() {
       if (Object.keys(ench).length) recipe.ench = ench;
 
       recipes[id] = recipe;
+
+      // Item-enchanting path: runes/souls/relics needed to upgrade the finished
+      // item one enchant level (independent of the crafting path above).
+      const upg = {};
+      for (const e of asArray(it.enchantments?.enchantment)) {
+        const lvl = Number(e["@enchantmentlevel"]);
+        if (!(lvl >= 1 && lvl <= 3)) continue;
+        const ur = asArray(e.upgraderequirements?.upgraderesource)
+          .map((x) => ({ id: x["@uniquename"], count: Number(x["@count"]) }))
+          .filter((x) => x.id && x.count > 0);
+        if (ur.length) upg[lvl] = ur[0]; // single rune/soul/relic resource
+      }
+      if (Object.keys(upg).length) enchants[id] = upg;
     }
   }
 
@@ -186,11 +203,13 @@ async function main() {
   await writeFile(join(DATA_DIR, "items.json"), JSON.stringify(tradeable));
   await writeFile(join(DATA_DIR, "recipes.json"), JSON.stringify(recipes));
   await writeFile(join(DATA_DIR, "journals.json"), JSON.stringify(journals));
+  await writeFile(join(DATA_DIR, "enchants.json"), JSON.stringify(enchants));
 
   const withJournal = Object.values(recipes).filter((r) => r.journal).length;
   console.log(
     `Wrote ${tradeable.length} items, ${Object.keys(recipes).length} recipes ` +
-      `(${withJournal} with a journal), journals for ${Object.keys(journals).join(", ")}.`
+      `(${withJournal} with a journal), ${Object.keys(enchants).length} enchantable items, ` +
+      `journals for ${Object.keys(journals).join(", ")}.`
   );
 }
 
