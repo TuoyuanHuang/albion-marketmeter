@@ -61,12 +61,15 @@ export default function EnchantScanner() {
   const [qualities, setQualities] = useState<number[]>([1]);
   const [salesTax, setSalesTax] = useState(DEFAULT_SALES_TAX * 100);
   const [setupFee, setSetupFee] = useState(DEFAULT_SETUP_FEE * 100);
+  const [useAvg, setUseAvg] = useState(true);
   const [incomplete, setIncomplete] = useState(false);
   const [sort, setSort] = useState<"profit" | "margin">("profit");
   const [rows, setRows] = useState<Row[]>([]);
   const [meta, setMeta] = useState<{ scanned: number; priced: number } | null>(null);
   // Sell city the displayed rows were scanned with (for the volume column header).
   const [usedSell, setUsedSell] = useState("");
+  // Whether the displayed rows used the average sell price (for the column header).
+  const [usedAvg, setUsedAvg] = useState(true);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -96,6 +99,7 @@ export default function EnchantScanner() {
         sellCity,
         tax: String(salesTax / 100),
         fee: String(setupFee / 100),
+        avg: useAvg ? "1" : "0",
         incomplete: incomplete ? "1" : "0",
         sort: sortBy,
       });
@@ -105,6 +109,7 @@ export default function EnchantScanner() {
       setRows(data.results as Row[]);
       setMeta({ scanned: data.scanned, priced: data.priced });
       setUsedSell(data.sellCity ?? sellCity);
+      setUsedAvg(data.avg ?? useAvg);
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Scan failed");
     } finally {
@@ -140,7 +145,18 @@ export default function EnchantScanner() {
           </Field>
           <NumField label="Sales tax %" value={salesTax} onChange={setSalesTax} />
           <NumField label="Setup fee %" value={setupFee} onChange={setSetupFee} />
-          <label className="flex items-center gap-2 text-sm text-white sm:col-span-2 lg:col-span-4">
+          <label
+            className="flex items-center gap-2 text-sm text-white sm:col-span-2"
+            title="On: profit uses the volume-weighted historical average sell price. Off: uses the current cheapest sell order (can be an inflated one-off listing)."
+          >
+            <input
+              type="checkbox"
+              checked={useAvg}
+              onChange={(e) => setUseAvg(e.target.checked)}
+            />
+            Use average sell price (vs current sell order)
+          </label>
+          <label className="flex items-center gap-2 text-sm text-white sm:col-span-2">
             <input
               type="checkbox"
               checked={incomplete}
@@ -220,9 +236,13 @@ export default function EnchantScanner() {
                 <th className="px-3 py-2 text-right">Mat cost</th>
                 <th
                   className="px-3 py-2 text-right"
-                  title="Net proceeds from selling the enchanted item, using the volume-weighted historical average sell price (net of tax + setup), not the current listing."
+                  title={
+                    usedAvg
+                      ? "Net proceeds from selling the enchanted item, using the volume-weighted historical average sell price (net of tax + setup)."
+                      : "Net proceeds from selling the enchanted item at the current cheapest sell order (net of tax + setup)."
+                  }
                 >
-                  Avg sell (net)
+                  {usedAvg ? "Avg sell (net)" : "Sell (net)"}
                 </th>
                 <th className="px-3 py-2 text-right">Profit</th>
                 <th className="px-3 py-2 text-right">Margin</th>
@@ -313,10 +333,11 @@ export default function EnchantScanner() {
         Each row enchants a <strong>base item all the way to the target level</strong>,
         chaining every upgrade: <strong>.1</strong> uses runes, <strong>.2</strong>{" "}
         adds souls, <strong>.3</strong> adds relics. Profit = enchanted sell price −
-        the base item − all the runes/souls/relics. The sell price is the{" "}
-        <strong>volume-weighted historical average</strong> (net of tax + setup), not
-        the current listing, so a single inflated order can&apos;t distort it (rows
-        without history fall back to the current price). The base item + materials are
+        the base item − all the runes/souls/relics. With{" "}
+        <strong>Use average sell price</strong> on (default), the sell price is the
+        volume-weighted historical average (net of tax + setup) so a single inflated
+        order can&apos;t distort it; off, it uses the current cheapest sell order. The
+        base item + materials are
         bought in {buyCity}; the enchanted item is sold in {sellCity}
         {sellCity === "Black Market" ? " (instant-sell, tax only)" : ""}. Enchanting
         preserves quality, so each row buys and sells at the same quality; materials

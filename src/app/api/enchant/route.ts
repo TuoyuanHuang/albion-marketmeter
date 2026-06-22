@@ -68,6 +68,8 @@ export async function GET(req: NextRequest) {
   const tax = Number(sp.get("tax") ?? "0.04");
   const fee = Number(sp.get("fee") ?? "0.025");
   const includeIncomplete = sp.get("incomplete") === "1";
+  // Use the historical average sell price (default) vs the current sell order.
+  const useAvg = sp.get("avg") !== "0";
   const sort = sp.get("sort") === "margin" ? "margin" : "profit";
 
   if (!groups.length || !tiers.length || !steps.length || !qualities.length) {
@@ -284,8 +286,8 @@ export async function GET(req: NextRequest) {
         r.recent = s.recent;
         r.avgSell = s.avg;
         // Recompute profit from the historical average sell price (avoids
-        // inflated one-off listings). Falls back to the current price otherwise.
-        if (r.complete && r.cost != null) {
+        // inflated one-off listings). Only when the average toggle is on.
+        if (useAvg && r.complete && r.cost != null) {
           r.sellNet = s.avg * feeMul;
           r.profit = r.sellNet - r.cost;
           r.margin = r.cost ? r.profit / r.cost : null;
@@ -303,5 +305,6 @@ export async function GET(req: NextRequest) {
     incomplete: incompleteCount,
     buyCity,
     sellCity,
+    avg: useAvg,
   });
 }
