@@ -37,6 +37,7 @@ interface ScanRow {
   avgSell: number | null;
   vol: number | null;
   volTotal: number | null;
+  recent: { d: string; n: number }[] | null;
   aDate: string;
   bDate: string;
 }
@@ -302,8 +303,10 @@ export default function FlipScanner() {
                   <td
                     className="px-3 py-2 text-right text-ao-muted"
                     title={
-                      r.volTotal != null
-                        ? `≈ ${fmt(r.volTotal)} traded at ${r.to} over the history window (~last month)`
+                      r.recent && r.recent.length
+                        ? `Actual sold per day at ${r.to} (newest last):\n` +
+                          r.recent.map((x) => `${x.d}: ${fmt(x.n)}`).join("\n") +
+                          `\n\n~30-day total ≈ ${fmt(r.volTotal)}`
                         : undefined
                     }
                   >
