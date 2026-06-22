@@ -28,10 +28,10 @@ async function runPool<T>(tasks: (() => Promise<T>)[], limit: number) {
 const csv = (v: string | null, fb: string) =>
   (v ?? fb).split(",").map((s) => s.trim()).filter(Boolean);
 
-async function fetchPrices(ids: string[], city: string) {
+async function fetchPrices(ids: string[], locations: string, qualities: string) {
   const url = new URL(`${AODP_BASE}/prices/${ids.map(encodeURIComponent).join(",")}`);
-  url.searchParams.set("qualities", "1");
-  url.searchParams.set("locations", city);
+  url.searchParams.set("qualities", qualities);
+  url.searchParams.set("locations", locations);
   const res = await fetch(url, {
     headers: { "User-Agent": "albion-market-app" },
     next: { revalidate: 120 },
@@ -46,15 +46,20 @@ export async function GET(req: NextRequest) {
   const subs = new Set(csv(sp.get("subs"), ""));
   const tiers = csv(sp.get("tiers"), "4,5,6,7,8").map(Number).filter((n) => n >= 1 && n <= 8);
   const steps = csv(sp.get("steps"), "1,2,3").map(Number).filter((s) => s >= 1 && s <= 3);
-  const city = sp.get("city") ?? "Caerleon";
+  const qualities = csv(sp.get("qualities"), "1").map(Number).filter((q) => q >= 1 && q <= 5);
+  // Buy the lower item + materials in one city; sell the enchanted item in
+  // another (or instant-sell to the Black Market).
+  const buyCity = sp.get("buyCity") ?? sp.get("city") ?? "Caerleon";
+  const sellCity = sp.get("sellCity") ?? sp.get("city") ?? buyCity;
+  const sellToBM = sellCity === "Black Market";
   const tax = Number(sp.get("tax") ?? "0.04");
   const fee = Number(sp.get("fee") ?? "0.025");
   const includeIncomplete = sp.get("incomplete") === "1";
   const sort = sp.get("sort") === "margin" ? "margin" : "profit";
 
-  if (!groups.length || !tiers.length || !steps.length) {
+  if (!groups.length || !tiers.length || !steps.length || !qualities.length) {
     return NextResponse.json(
-      { error: "Select at least one category, tier and upgrade step" },
+      { error: "Select at least one category, tier, upgrade step and quality" },
       { status: 400 }
     );
   }
@@ -92,29 +97,42 @@ export async function GET(req: NextRequest) {
   const batches: string[][] = [];
   for (let i = 0; i < allIds.length; i += BATCH) batches.push(allIds.slice(i, i + BATCH));
 
+  // Materials are quality 1; items at the selected qualities. Fetch both cities.
+  const qualitiesParam = Array.from(new Set([1, ...qualities])).join(",");
+  const locations = Array.from(new Set([buyCity, sellCity])).join(",");
   let rows: PriceRow[];
   try {
     rows = (
-      await runPool(batches.map((b) => () => fetchPrices(b, city)), CONCURRENCY)
+      await runPool(batches.map((b) => () => fetchPrices(b, locations, qualitiesParam)), CONCURRENCY)
     ).flat();
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : "scan failed" }, { status: 502 });
   }
 
-  // id -> cheapest sell order at the city (what you pay / list at).
-  const sellMin = new Map<string, { price: number; date: string }>();
+  // market[`${id}|${q}|${city}`] = { sellMin, buyMax, date }
+  const market = new Map<string, { sellMin?: number; buyMax?: number; date: string }>();
   for (const r of rows) {
-    if (isPriced(r.sell_price_min)) {
-      sellMin.set(r.item_id, { price: r.sell_price_min, date: r.sell_price_min_date });
-    }
+    const key = `${r.item_id}|${r.quality}|${r.city}`;
+    const cur = market.get(key) ?? { date: "" };
+    if (isPriced(r.sell_price_min)) { cur.sellMin = r.sell_price_min; cur.date = r.sell_price_min_date; }
+    if (isPriced(r.buy_price_max)) { cur.buyMax = r.buy_price_max; if (!cur.date) cur.date = r.buy_price_max_date; }
+    market.set(key, cur);
   }
-  const priceOf = (id: string) => sellMin.get(id);
+  // What you pay to acquire an item/material (cheapest sell order in the buy city).
+  const buyPrice = (id: string, q: number) => market.get(`${id}|${q}|${buyCity}`)?.sellMin;
+  // What you receive selling the enchanted item: list a sell order, or instant-sell to the BM.
+  const sellQuote = (id: string, q: number) => {
+    const m = market.get(`${id}|${q}|${sellCity}`);
+    if (!m) return undefined;
+    return sellToBM ? { price: m.buyMax, date: m.date } : { price: m.sellMin, date: m.date };
+  };
 
   const STEP_LABEL: Record<number, string> = { 1: "Base → .1", 2: ".1 → .2", 3: ".2 → .3" };
-  const feeMul = 1 - tax - fee;
+  // Black Market = instant sell (tax only, no setup fee).
+  const feeMul = sellToBM ? 1 - tax : 1 - tax - fee;
 
   interface Row {
-    id: string; name: string; tier: number; step: number; stepLabel: string;
+    id: string; name: string; tier: number; step: number; stepLabel: string; quality: number;
     lowerId: string; lower: number | null;
     matId: string; matName: string; matCount: number; matUnit: number | null; matCost: number | null;
     sellGross: number | null; sellNet: number | null; cost: number | null;
@@ -131,47 +149,49 @@ export async function GET(req: NextRequest) {
       if (!mat) continue;
       const lowerId = s === 1 ? it.id : `${it.id}@${s - 1}`;
       const higherId = `${it.id}@${s}`;
+      // Material (rune/soul/relic) is always normal quality, bought in the buy city.
+      const matUnit = buyPrice(mat.id, 1) ?? null;
 
-      const lowerP = priceOf(lowerId);
-      const matP = priceOf(mat.id);
-      const higherP = priceOf(higherId);
+      for (const q of qualities) {
+        // Enchanting preserves quality: buy a quality-q lower item, sell a quality-q higher item.
+        const lower = buyPrice(lowerId, q) ?? null;
+        const quote = sellQuote(higherId, q);
+        const sellGross = quote?.price ?? null;
+        const complete = lower != null && matUnit != null && sellGross != null;
+        if (!complete) {
+          incompleteCount++;
+          if (!includeIncomplete) continue;
+        }
 
-      const lower = lowerP?.price ?? null;
-      const matUnit = matP?.price ?? null;
-      const sellGross = higherP?.price ?? null;
-      const complete = lower != null && matUnit != null && sellGross != null;
-      if (!complete) {
-        incompleteCount++;
-        if (!includeIncomplete) continue;
+        const matCost = matUnit != null ? matUnit * mat.count : null;
+        const cost = lower != null && matCost != null ? lower + matCost : null;
+        const sellNet = sellGross != null ? sellGross * feeMul : null;
+        const profit = sellNet != null && cost != null ? sellNet - cost : null;
+        const margin = profit != null && cost ? profit / cost : null;
+
+        results.push({
+          id: higherId,
+          name: displayName(it.id),
+          tier: it.tier,
+          step: s,
+          stepLabel: STEP_LABEL[s],
+          quality: q,
+          lowerId,
+          lower,
+          matId: mat.id,
+          matName: displayName(mat.id),
+          matCount: mat.count,
+          matUnit,
+          matCost,
+          sellGross,
+          sellNet,
+          cost,
+          profit,
+          margin,
+          complete,
+          sellDate: quote?.date ?? "",
+        });
       }
-
-      const matCost = matUnit != null ? matUnit * mat.count : null;
-      const cost = lower != null && matCost != null ? lower + matCost : null;
-      const sellNet = sellGross != null ? sellGross * feeMul : null;
-      const profit = sellNet != null && cost != null ? sellNet - cost : null;
-      const margin = profit != null && cost ? profit / cost : null;
-
-      results.push({
-        id: higherId,
-        name: displayName(it.id),
-        tier: it.tier,
-        step: s,
-        stepLabel: STEP_LABEL[s],
-        lowerId,
-        lower,
-        matId: mat.id,
-        matName: displayName(mat.id),
-        matCount: mat.count,
-        matUnit,
-        matCost,
-        sellGross,
-        sellNet,
-        cost,
-        profit,
-        margin,
-        complete,
-        sellDate: higherP?.date ?? "",
-      });
     }
   }
 
@@ -186,6 +206,7 @@ export async function GET(req: NextRequest) {
     scanned: items.length,
     priced: results.filter((r) => r.complete).length,
     incomplete: incompleteCount,
-    city,
+    buyCity,
+    sellCity,
   });
 }
