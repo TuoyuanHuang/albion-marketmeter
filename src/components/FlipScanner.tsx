@@ -37,6 +37,8 @@ interface ScanRow {
   avgSell: number | null;
   vol: number | null;
   volTotal: number | null;
+  lastVol: number | null;
+  lastDate: string | null;
   recent: { d: string; n: number }[] | null;
   aDate: string;
   bDate: string;
@@ -243,11 +245,11 @@ export default function FlipScanner() {
                 </th>
                 <th
                   className="px-3 py-2 text-right"
-                  title="Average items traded per day at the destination market (history). For a Black Market destination this is roughly how many it buys per day — higher means your sell is more likely to actually go through."
+                  title="Items actually sold at the destination market on the last completed day (history). For a Black Market destination this is how many it bought that day — hover a cell for the date and recent days."
                 >
                   {used?.a === "Black Market" || used?.b === "Black Market"
-                    ? "BM buys/day"
-                    : "Traded/day"}
+                    ? "BM bought (last day)"
+                    : "Sold (last day)"}
                 </th>
                 <th className="px-3 py-2 text-right">Profit</th>
                 <th className="px-3 py-2 text-right">Margin</th>
@@ -304,13 +306,21 @@ export default function FlipScanner() {
                     className="px-3 py-2 text-right text-ao-muted"
                     title={
                       r.recent && r.recent.length
-                        ? `Actual sold per day at ${r.to} (newest last):\n` +
+                        ? `Last completed day (${r.lastDate}): ${fmt(r.lastVol)} sold at ${r.to}\n\n` +
+                          `Actual sold per day (newest last):\n` +
                           r.recent.map((x) => `${x.d}: ${fmt(x.n)}`).join("\n") +
-                          `\n\n~30-day total ≈ ${fmt(r.volTotal)}`
+                          `\n\n~30-day avg ${fmt(r.vol)}/day · total ≈ ${fmt(r.volTotal)}`
                         : undefined
                     }
                   >
-                    {r.vol == null ? "—" : fmt(r.vol)}
+                    <span className="whitespace-nowrap">
+                      {r.lastVol == null ? "—" : fmt(r.lastVol)}
+                      {r.lastDate && (
+                        <span className="ml-1 text-[10px] text-ao-muted/70">
+                          {r.lastDate}
+                        </span>
+                      )}
+                    </span>
                   </td>
                   <td className="px-3 py-2 text-right font-medium text-ao-green">
                     {fmt(r.profit)}
@@ -337,11 +347,12 @@ export default function FlipScanner() {
         <strong>Avg sell/day</strong> is the volume-weighted daily average price at
         the destination market — a ↑ flag means the current sell quote sits well
         above it, so the flip may not actually fill at that price.{" "}
-        <strong>BM buys/day</strong> (or Traded/day) is the average quantity traded
-        per day at the destination over ~the last month — for the Black Market,
-        roughly how many it buys daily, so higher means your sell is more likely to
-        go through (hover for the window total). Prices are crowd-sourced and may be
-        stale — verify in-game before trading.
+        <strong>BM bought (last day)</strong> (or Sold last day) is the actual
+        quantity traded at the destination on the most recent completed day, with
+        that date shown next to it — for the Black Market, how many it bought that
+        day, so higher means your sell is more likely to go through (hover for the
+        recent daily breakdown and 30-day average). Prices are crowd-sourced and may
+        be stale — verify in-game before trading.
       </p>
     </div>
   );

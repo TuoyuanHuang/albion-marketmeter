@@ -237,6 +237,8 @@ export async function GET(req: NextRequest) {
             avgSell: null as number | null, // volume-weighted daily avg price
             vol: null as number | null, // avg items traded per day
             volTotal: null as number | null, // total items traded over the window
+            lastVol: null as number | null, // items sold on the last completed day
+            lastDate: null as string | null, // date of that last completed day
             recent: null as { d: string; n: number }[] | null, // last days' actual sold counts
           });
         }
@@ -265,15 +267,26 @@ export async function GET(req: NextRequest) {
     } catch {
       hist = [];
     }
-    // id|quality|location -> { avg price, avg daily volume, total volume, recent days }.
+    // The current (in-progress) UTC day — its bucket is partial, so the "last
+    // day" figure uses the most recent day strictly before it.
+    const todayUTC = new Date().toISOString().slice(0, 10);
+
+    // id|quality|location -> history stats at that market.
     const stat = new Map<
       string,
-      { avg: number; vol: number; total: number; recent: { d: string; n: number }[] }
+      {
+        avg: number;
+        vol: number;
+        total: number;
+        lastVol: number;
+        lastDate: string;
+        recent: { d: string; n: number }[];
+      }
     >();
     for (const s of hist) {
       if (!s.data?.length) continue;
-      // Sort chronologically so "recent" is the latest days (AODP is usually
-      // already ascending, but don't rely on it).
+      // Sort chronologically so "recent"/"last" are the latest days (AODP is
+      // usually already ascending, but don't rely on it).
       const pts = [...s.data].sort((a, b) =>
         a.timestamp < b.timestamp ? -1 : 1
       );
@@ -282,10 +295,17 @@ export async function GET(req: NextRequest) {
         total > 0
           ? pts.reduce((sum, d) => sum + d.avg_price * d.item_count, 0) / total
           : pts.reduce((sum, d) => sum + d.avg_price, 0) / pts.length;
+      // Last completed day = newest point that isn't today's partial bucket.
+      const complete = pts.filter((d) => d.timestamp.slice(0, 10) < todayUTC);
+      const lastPt = (complete.length ? complete : pts)[
+        (complete.length ? complete : pts).length - 1
+      ];
       stat.set(`${s.item_id}|${s.quality}|${s.location}`, {
         avg: wAvg,
         vol: total / pts.length, // average items traded per day
         total,
+        lastVol: lastPt.item_count,
+        lastDate: lastPt.timestamp.slice(5, 10),
         // Actual items sold per day for the most recent days (the in-game
         // market-history numbers), newest last.
         recent: pts.slice(-7).map((d) => ({ d: d.timestamp.slice(5, 10), n: d.item_count })),
@@ -297,6 +317,8 @@ export async function GET(req: NextRequest) {
         r.avgSell = s.avg;
         r.vol = s.vol;
         r.volTotal = s.total;
+        r.lastVol = s.lastVol;
+        r.lastDate = s.lastDate;
         r.recent = s.recent;
       }
     }
